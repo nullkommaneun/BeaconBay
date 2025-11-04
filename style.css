@@ -1,0 +1,204 @@
+/* style.css - Das "BeaconBay Hacker Theme"
+  
+  Design-Philosophie: Dunkel, hoher Kontrast, Monospace-Schriftart
+  und Neon-Akzente (Cyan/Grün), um ein "Terminal"- oder "Workbench"-
+  Gefühl zu erzeugen.
+*/
+
+/* Import der Monospace-Schriftart */
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;700&display=swap');
+
+/* WARUM: CSS-Variablen (Custom Properties)
+  Definieren das Farbschema an einem Ort. Das macht
+  Theme-Anpassungen (z.B. ein "Light-Theme") trivial.
+*/
+:root {
+    --bg-color: #0a0a1a; /* Sehr dunkles Blau/Schwarz */
+    --text-color: #e0e0e0;
+    --accent-color-main: #00faff; /* Neon-Cyan */
+    --accent-color-secondary: #00ff8c; /* Neon-Grün */
+    --error-color: #ff4136;
+    --warn-color: #ffdc00;
+    --border-color: #00faff;
+    --card-bg: #1a1a2e;
+    --font-main: 'Fira Code', 'Courier New', monospace;
+}
+
+/* Globaler Reset und Basis-Styling */
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+html, body {
+    width: 100%;
+    height: 100%;
+    font-family: var(--font-main);
+    background-color: var(--bg-color);
+    color: var(--text-color);
+    font-size: 14px;
+    /* WIE: UI-Struktur
+      Wir verwenden Flexbox, um ein "Sticky Footer"-Layout zu erzwingen.
+      Der <main>-Bereich füllt den verfügbaren Platz.
+    */
+    display: flex;
+    flex-direction: column;
+}
+
+/* ======== Layout-Container ======== */
+header, nav.toolbar {
+    flex-shrink: 0; /* Verhindert das Schrumpfen von Header/Nav */
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap; /* Für kleinere Bildschirme */
+}
+
+header h1 {
+    color: var(--accent-color-main);
+    text-shadow: 0 0 5px var(--accent-color-main);
+}
+
+main#view-container {
+    flex-grow: 1; /* Wichtig: Füllt den Platz bis zum Footer */
+    overflow-y: auto; /* Nur der Hauptbereich scrollt */
+    padding: 1.5rem;
+}
+
+footer {
+    flex-shrink: 0;
+    border-top: 1px solid var(--border-color);
+    background-color: #000;
+}
+
+/* ======== Steuerelemente (Buttons, Checkbox) ======== */
+button {
+    font-family: var(--font-main);
+    background: transparent;
+    border: 1px solid var(--accent-color-secondary);
+    color: var(--accent-color-secondary);
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+button:hover {
+    background-color: var(--accent-color-secondary);
+    color: #000;
+    box-shadow: 0 0 10px var(--accent-color-secondary);
+}
+
+button:disabled {
+    border-color: #555;
+    color: #555;
+    cursor: not-allowed;
+    background: transparent;
+    box-shadow: none;
+}
+
+nav.toolbar {
+    background-color: #111;
+    border-bottom-color: #333;
+    gap: 1rem;
+}
+
+.toolbar-group {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+/* Styling für die Checkbox */
+input[type="checkbox"] {
+    accent-color: var(--accent-color-main);
+}
+
+/* ======== Diagnose-Panel (Footer) ======== */
+#diag-log-panel {
+    height: 150px;
+    background-color: #000;
+    overflow-y: scroll;
+    padding: 0.5rem;
+    font-size: 0.85rem;
+    /* WIE: Lesbarkeit des Logs
+      Wir verwenden 'display: flex' und 'flex-direction: column-reverse',
+      damit das Panel automatisch nach unten scrollt (neueste Einträge
+      sind immer sichtbar), aber das Scrollen oben beginnt.
+      In JS verwenden wir .prepend(), was hiermit harmoniert.
+    */
+    display: flex;
+    flex-direction: column-reverse;
+}
+
+.log-entry {
+    display: block; /* Jedes Log als eigene Zeile */
+    line-height: 1.5;
+    white-space: pre-wrap; /* Um Zeilenumbrüche in Fehlern zu erhalten */
+    border-bottom: 1px dotted #222;
+}
+
+/* WARUM: Farbige Log-Level
+  Visuelle Unterscheidung von Fehlern, Warnungen und normaler
+  Diagnose-Info ist für das Debugging unerlässlich.
+*/
+.log-info { color: var(--accent-color-main); }
+.log-utils { color: #aaa; }
+.log-bt { color: var(--text-color); }
+.log-warn { color: var(--warn-color); }
+.log-error { 
+    color: var(--error-color); 
+    font-weight: bold;
+    background-color: #2a0000;
+}
+
+
+/* ======== Beacon-Ansicht (Wird von ui.js befüllt) ======== */
+.card-container {
+    display: grid;
+    /* WIE: Responsives Grid-Layout
+      Wir verwenden CSS Grid, um die Karten flexibel anzuordnen.
+      'auto-fit' erstellt so viele Spalten, wie in den Container
+      passen, wobei jede Spalte mindestens 350px breit ist.
+    */
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: 1.25rem;
+}
+
+.beacon-card {
+    background-color: var(--card-bg);
+    border: 1px solid #444;
+    border-left: 4px solid var(--accent-color-main);
+    padding: 1rem;
+    transition: all 0.3s ease;
+}
+
+.beacon-card h3 {
+    color: var(--accent-color-main);
+    margin-bottom: 0.5rem;
+    font-size: 1.2rem;
+}
+
+/* WARUM: .stale-Klasse
+  Diese Klasse wird von bluetooth.js (via ui.js) gesetzt, wenn
+  ein Gerät länger nicht gesehen wurde. Der 'opacity'-Stil
+  blendet es visuell aus, wenn der Stale-Toggle aktiv ist.
+*/
+.stale {
+    opacity: 0.3;
+    border-left-color: #555;
+}
+
+/* Platzhalter für Telemetrie- und Beacon-Daten */
+.beacon-telemetry, .beacon-data {
+    margin-top: 0.75rem;
+    font-size: 0.9rem;
+}
+
+.beacon-telemetry span, .beacon-data span {
+    margin-right: 0.75rem;
+}
+
+ 
