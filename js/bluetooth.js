@@ -1,10 +1,10 @@
 /**
- * js/bluetooth.js (Version 9.9 - "Ultimate Stability" Patch)
+ * js/bluetooth.js (Version 9.11 - "Filtered Handshake" & "Always Connectable")
  * * ARCHITEKTUR-HINWEIS:
- * - Akzeptiert Callbacks in initBluetooth().
- * - onGattDisconnect ruft jetzt den app.js-Callback 'onGattDisconnected' auf.
- * - Dies stellt sicher, dass app.js den Scan neu starten kann,
- * wenn die Verbindung unerwartet abbricht.
+ * - V9.10: isInteresting-Logik in handleAdvertisement entfernt.
+ * 'isConnectable' ist jetzt immer 'true'.
+ * - V9.11: requestDeviceForHandshake holt den Namen des Geräts
+ * und verwendet den Namensfilter.
  */
 
 import { diagLog } from './errorManager.js';
@@ -32,7 +32,7 @@ let staleCheckInterval = null;
 let activeScan = null;
 let gattServer = null;
 let gattCharacteristicMap = new Map();
-let appCallbacks = {}; // V9.9 NEU: Callbacks vom Dirigenten (app.js)
+let appCallbacks = {};
 
 // === KONSTANTEN ===
 const STALE_DEVICE_THRESHOLD_MS = 10000;
@@ -40,22 +40,32 @@ const STALE_CHECK_INTERVAL_MS = 2000;
 
 // === PRIVATE HELPER: SCANNING ===
 
+/**
+ * V9.10 PATCH: 'isInteresting'-Logik entfernt.
+ * Jedes Gerät wird als 'isConnectable = true' behandelt.
+ */
 function handleAdvertisement(event) {
-    // ... (unverändert)
     try {
         logAdvertisement(event);
-        const { device, manufacturerData, serviceData } = event;
-        const isInteresting = (manufacturerData && manufacturerData.size > 0) || 
-                              (serviceData && serviceData.size > 0);
-        diagLog(`[TRACE] handleAdvertisement: Gerät ${device.id.substring(0, 4)}... hat isInteresting=${isInteresting}`, 'utils');
+        
+        const { device } = event; // manufacturerData/serviceData nicht mehr nötig
+        
+        // V9.10 PATCH: Logik entfernt.
+        // const isInteresting = ...
+
         const parsedData = parseAdvertisementData(event);
         if (!parsedData) return; 
-        parsedData.isConnectable = isInteresting;
+        
+        // V9.10 PATCH: Immer verbindbar.
+        parsedData.isConnectable = true; 
+        
         deviceMap.set(device.id, {
             deviceObject: device, 
             parsedData: parsedData
         });
+        
         updateBeaconUI(device.id, parsedData);
+
     } catch (err) {
         diagLog(`Fehler in handleAdvertisement: ${err.message}`, 'error');
     }
@@ -72,7 +82,7 @@ function checkStaleDevices() {
 }
 
 /**
- * V9.9 PATCH: Ruft jetzt den Dirigenten-Callback auf.
+ * V9.9 PATCH: Ruft Dirigenten-Callback auf.
  */
 function onGattDisconnect() {
     diagLog('GATT-Verbindung getrennt.', 'bt');
@@ -84,7 +94,6 @@ function onGattDisconnect() {
     setScanStatus(false); 
     setGattConnectingUI(false, null);
     
-    // V9.9 PATCH: Sage dem Dirigenten (app.js) Bescheid!
     if (appCallbacks.onGattDisconnected) {
         appCallbacks.onGattDisconnected();
     }
@@ -175,41 +184,58 @@ export function disconnect() {
     }
 }
 
-// === PUBLIC API: GATT INTERACTION (V9.8 Logik) ===
+// === PUBLIC API: GATT INTERACTION (V9.11 PATCH) ===
 
 /**
- * V9.8: Phase 1 - Führt Handshake OHNE FILTER durch.
+ * V9.11 NEU: Phase 1 - Führt Handshake MIT NAMENSFILTER durch.
+ * Geht davon aus, dass der Scan (in app.js) bereits gestoppt wurde.
+ * @param {string} deviceId - Die ID des Geräts aus unserer 'deviceMap'.
+ * @returns {Promise<BluetoothDevice | null>} - Das autorisierte Gerät oder null.
  */
-export async function requestDeviceForHandshake() {
-    diagLog('[Handshake V9.8] Starte "acceptAllDevices"-Handshake...', 'bt');
+export async function requestDeviceForHandshake(deviceId) {
+    diagLog(`[Handshake V9.11] Starte für ${deviceId.substring(0, 4)}...`, 'bt');
+    const deviceData = deviceMap.get(deviceId);
+    
+    if (!deviceData) {
+        diagLog(`[Handshake V9.11] FEHLER: Gerät ${deviceId} nicht in deviceMap gefunden.`, 'error');
+        return null;
+    }
+
+    const deviceName = deviceData.parsedData.name;
+    if (!deviceName) {
+        diagLog(`[Handshake V9.11] FEHLER: Gerät ${deviceId} hat keinen Namen. Filter nicht möglich.`, 'error');
+        return null;
+    }
     
     setGattConnectingUI(true); 
 
     try {
-        diagLog('[Handshake V9.8] Fordere Erlaubnis für ALLE Geräte an...', 'bt');
+        diagLog(`[Handshake V9.11] Fordere Erlaubnis für Gerät mit Namen an: "${deviceName}"`, 'bt');
         
         const device = await navigator.bluetooth.requestDevice({
-            acceptAllDevices: true, 
+            filters: [{ name: deviceName }], // V9.11 TEST: Namensfilter
             optionalServices: [
                 '0000180a-0000-1000-8000-00805f9b34fb', // Device Information
                 '0000180f-0000-1000-8000-00805f9b34fb'  // Battery Service
             ]
         });
         
-        diagLog(`[Handshake V9.8] Erlaubnis erteilt für: ${device.name}`, 'bt');
+        diagLog(`[Handshake V9.11] Erlaubnis erteilt für: ${device.name}`, 'bt');
         return device; 
 
     } catch (err) {
-        diagLog(`[Handshake V9.8] FEHLER: ${err.message}`, 'error');
+        diagLog(`[Handshake V9.11] FEHLER: ${err.message}`, 'error');
         if (err.name === 'NotFoundError' || err.name === 'NotAllowedError') {
-             diagLog('Handshake vom Benutzer abgelehnt oder kein Gerät ausgewählt.', 'warn');
+             diagLog('Handshake vom Benutzer abgelehnt oder Gerät (mit Filter) nicht gefunden.', 'warn');
         }
         return null; 
     }
 }
 
 /**
- * V9.8: Phase 2 - Verbindet mit autorisiertem Gerät.
+ * V9.11: Phase 2 - Unverändert. Verbindet mit autorisiertem Gerät.
+ * @param {BluetoothDevice} device - Das autorisierte Gerät von requestDeviceForHandshake.
+ * @returns {Promise<boolean>} - True bei Erfolg, False bei Fehler.
  */
 export async function connectWithAuthorizedDevice(device) {
     diagLog(`[TRACE] connectWithAuthorizedDevice(${device.name}) gestartet.`, 'bt');
@@ -222,6 +248,7 @@ export async function connectWithAuthorizedDevice(device) {
         diagLog('GATT-Server verbunden. Lese Services...', 'bt');
         
         const services = await gattServer.getPrimaryServices();
+        // ... (Rest der Funktion ist unverändert)
         diagLog(`Services gefunden: ${services.length}`, 'bt');
         
         const gattTree = [];
@@ -281,7 +308,7 @@ export async function connectWithAuthorizedDevice(device) {
 
     } catch (err) {
         diagLog(`GATT-Verbindungsfehler: ${err.message}`, 'error');
-        onGattDisconnect(); // V9.9 WICHTIG: Dies löst den Callback aus!
+        onGattDisconnect(); 
         setGattConnectingUI(false, err.message); 
         
         return false; // Misserfolg melden
@@ -322,3 +349,4 @@ export async function startNotifications(charUuid) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
 }
+ 
