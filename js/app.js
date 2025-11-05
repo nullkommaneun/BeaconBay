@@ -1,16 +1,15 @@
 /**
- * js/app.js (Version 9.3 - Stabiler Stand)
+ * js/app.js (Version 9.5 - GATT-Stabilitätspatch)
  * * ARCHITEKTUR-HINWEIS:
- * - Rollback von V9.4. Der "Scan-Re-Trigger" wurde entfernt,
- * da er vom Betriebssystem blockiert wird.
- * - Behebt den "gattServer is not defined" ReferenceError.
- * - viewToggleAction ruft sauber die disconnect()-Funktion auf.
+ * - gattConnectAction ist jetzt 'async' und wartet auf das Ergebnis
+ * von connectToDevice.
+ * - Wenn connectToDevice 'false' zurückgibt (Verbindung fehlgeschlagen),
+ * wird scanAction() automatisch aufgerufen, um den Scan neu zu starten
+ * und die App stabil zu halten.
  */
 
 // Heartbeat
 window.__app_heartbeat = false;
-
-// HINWEIS: V9.4-Timer-Variablen wurden entfernt.
 
 function earlyDiagLog(msg, isError = false) {
     try {
@@ -87,14 +86,12 @@ async function initApp() {
         // --- Callbacks definieren (Dependency Inversion) ---
         diagLog('Verbinde UI-Listener...', 'info');
 
-        // (Rollback zu V9.3)
         const scanAction = () => {
             diagLog("Aktion: Scan gestartet (via app.js)", "bt");
             startKeepAlive();
             startScan();
         };
 
-        // (Rollback zu V9.3)
         const stopScanAction = () => {
             diagLog("Aktion: Scan gestoppt (via app.js)", "bt");
             stopScan();
@@ -111,14 +108,32 @@ async function initApp() {
             }
         };
         
-        // (Rollback zu V9.3)
-        const gattConnectAction = (deviceId) => {
+        /**
+         * V9.5 PATCH: Wird 'async' gemacht, um auf das Ergebnis
+         * von connectToDevice zu warten.
+         * Stoppt den Scan, versucht zu verbinden. Wenn es fehlschlägt,
+         * wird der Scan (scanAction) neu gestartet.
+         */
+        const gattConnectAction = async (deviceId) => { // 'async' hinzugefügt
             diagLog(`Aktion: Verbinde GATT für ${deviceId.substring(0, 4)}...`, 'bt');
-            // 1. JETZT den Scan stoppen
+            
+            // 1. Scan stoppen (wie bisher)
             stopScan();
             stopKeepAlive();
-            // 2. Bluetooth-Modul anweisen, zu verbinden
-            connectToDevice(deviceId);
+            
+            // 2. Bluetooth-Modul anweisen, zu verbinden UND auf Ergebnis warten
+            const success = await connectToDevice(deviceId); // 'await' hinzugefügt
+            
+            // 3. V9.5 PATCH: Bei Misserfolg, Scan neu starten
+            if (!success) {
+                diagLog('GATT-Verbindung fehlgeschlagen. Starte Scan neu...', 'bt');
+                
+                // scanAction() startet den Scan neu UND bluetooth.js (startScan)
+                // wird die UI (via showView('beacon')) zurücksetzen.
+                scanAction(); 
+            }
+            // Wenn 'success' true ist, tun wir nichts. 
+            // Der Benutzer ist dann verbunden und im Inspektor.
         };
         
         const gattDisconnectAction = () => {
