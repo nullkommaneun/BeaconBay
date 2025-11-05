@@ -1,9 +1,10 @@
 /**
- * js/ui.js (Version 9.2 - Inspektor-Stabilitätspatch)
- * * ARCHITEKTUR-HINWEIS: Layer 2 Modul.
- * - Behebt den "feststeckenden" Inspektor-Bug (Bug 2 & 3).
- * - Die Listener für die Inspektor-Buttons werden jetzt einmalig in setupUIListeners gesetzt.
- * - showInspectorView ist jetzt "stateless" und setzt den Zustand (ID, Button-Status) bei jedem Aufruf neu.
+ * js/ui.js (Version 10 - GATT-Write Implementiert)
+ * * ARCHITEKTUR-HINWEIS:
+ * - Basiert auf stabiler V9.2-Logik (permanente Listener).
+ * - V10: Aktiviert den "Schreiben"-Button im GATT-Baum.
+ * - V10: Fügt 'writeWithoutResponse' zur 'canWrite'-Prüfung hinzu.
+ * - V10: Bindet den Click-Listener für 'onWrite' in renderGattTree.
  */
 
 import { diagLog } from './errorManager.js';
@@ -28,7 +29,7 @@ const downloadButton = document.getElementById('downloadButton');
 const beaconView = document.getElementById('beacon-view');
 const inspectorView = document.getElementById('inspector-view');
 
-// Inspektor-Ansicht Elemente (Namen aus deinem V9.1-Code übernommen)
+// Inspektor-Ansicht Elemente
 const inspectorDeviceName = document.getElementById('inspectorDeviceName');
 const inspectorRssiCanvas = document.getElementById('inspectorRssiChart');
 const inspectorAdList = document.getElementById('inspector-ad-list');
@@ -45,7 +46,6 @@ let appCallbacks = {};
 // V9.2 PATCH: Zustandsspeicherung für den Inspektor
 let inspectorRssiChart = null; // Hält die Chart.js-Instanz
 let currentlyInspectedId = null; // Hält die ID für den "Verbinden"-Button
-
 
 /**
  * NEU: Liste der Firmen, die wir als "Industrie-relevant" einstufen.
@@ -93,7 +93,7 @@ function updateSparkline(chart, rssi) {
 // === PRIVATE HELPER: RENDERING ===
 
 function renderTelemetry(telemetry) {
-    if (!telemetry.temperature) return ''; // Prüft auf ein Ruuvi-spezifisches Feld
+    if (!telemetry.temperature) return ''; 
     return `
         <div class="beacon-telemetry">
             <span>🌡️ ${telemetry.temperature} °C</span>
@@ -157,9 +157,6 @@ function handleStaleToggle() {
 
 // === PUBLIC API: VIEW-MANAGEMENT ===
 
-/**
- * Schaltet zwischen 'beacon' und 'inspector' Ansicht um.
- */
 export function showView(viewName) {
     if (viewName === 'inspector') {
         if (beaconView) beaconView.style.display = 'none';
@@ -173,10 +170,6 @@ export function showView(viewName) {
     }
 }
 
-/**
- * Wird von bluetooth.js aufgerufen, um die UI in den Ladezustand zu versetzen.
- * V9.2 HINWEIS: Verwendet die globalen Button-Referenzen.
- */
 export function setGattConnectingUI(isConnecting, error = null, isConnected = false) {
     if (isConnecting) {
         gattConnectButton.disabled = true;
@@ -189,13 +182,10 @@ export function setGattConnectingUI(isConnecting, error = null, isConnected = fa
         gattDisconnectButton.disabled = false;
     } else {
         // Fehler oder normale Trennung
-        // WICHTIG: Der 'disabled'-Status von gattConnectButton wird durch
-        // das 'isConnectable' des *aktuellen* Geräts gesteuert.
-        // Wir setzen ihn hier nur zurück, wenn wir wissen, dass das Gerät verbindbar ist.
         const deviceLog = appCallbacks.onGetDeviceLog(currentlyInspectedId);
         
         gattConnectButton.disabled = deviceLog ? !deviceLog.isConnectable : true;
-        gattConnectButton.textContent = 'Verbinden';
+        gattConnectButton.textContent = deviceLog ? 'Verbinden' : '...'; // (V9.13 Fix: 'isConnectable' ist jetzt immer true)
         gattDisconnectButton.disabled = true;
 
         if (gattTreeContainer) {
@@ -210,10 +200,7 @@ export function setGattConnectingUI(isConnecting, error = null, isConnected = fa
 
 
 /**
- * V9.2 PATCH: Füllt und zeigt die Inspektor-Ansicht.
- * Diese Funktion ist jetzt "stateless" und robust gegen Mehrfachaufrufe.
- * Sie klont keine Buttons mehr.
- * @param {object} deviceLog - Das vollständige Log-Objekt von logger.js.
+ * V9.2 PATCH: Robuste Inspektor-Ansicht
  */
 export function showInspectorView(deviceLog) {
     
@@ -221,42 +208,24 @@ export function showInspectorView(deviceLog) {
     currentlyInspectedId = deviceLog.id;
 
     // ----- 2. ALTE DATEN BEREINIGEN (KRITISCH) -----
-    
-    // Zerstöre den alten Chart, falls er existiert
     if (inspectorRssiChart) {
         inspectorRssiChart.destroy();
         inspectorRssiChart = null;
     }
-    
-    // Leere die Advertisement-Liste
     inspectorAdList.innerHTML = '';
-    
-    // Setze GATT-Bereiche visuell zurück
     gattSummaryBox.style.display = 'none';
     gattTreeContainer.innerHTML = '<p>Noch nicht verbunden. Klicken Sie auf "Verbinden", um den GATT-Baum zu laden.</p>';
     gattTreeContainer.style.display = 'block';
 
-
     // ----- 3. NEUE DATEN FÜLLEN -----
-
-    // Setze Titel
     inspectorDeviceName.textContent = deviceLog.name || '[Unbenannt]';
     
-    // Setze Button-Status (KRITISCH!)
-    // Der Listener ist bereits in setupUIListeners global gesetzt.
-    if (deviceLog.isConnectable) {
-        gattConnectButton.disabled = false;
-        gattConnectButton.textContent = 'Verbinden';
-    } else {
-        gattConnectButton.disabled = true;
-        gattConnectButton.textContent = 'GATT nicht verfügbar';
-    }
-    // Der Disconnect-Button ist standardmäßig deaktiviert, bis eine Verbindung besteht
+    // (V9.13 Fix: 'isConnectable' ist jetzt immer true)
+    gattConnectButton.disabled = !deviceLog.isConnectable;
+    gattConnectButton.textContent = 'Verbinden';
     gattDisconnectButton.disabled = true;
     
     // ----- 4. NEUEN CHART ZEICHNEN -----
-    
-    // RSSI-Verlauf-Chart rendern
     const ctx = inspectorRssiCanvas.getContext('2d');
     inspectorRssiChart = new Chart(ctx, {
         type: 'line',
@@ -283,7 +252,6 @@ export function showInspectorView(deviceLog) {
     });
 
     // ----- 5. ADVERTISEMENT-LISTE FÜLLEN -----
-    
     if (deviceLog.uniqueAdvertisements.length === 0) {
         inspectorAdList.innerHTML = '<div class="ad-entry">Keine Advertisement-Daten geloggt.</div>';
     } else {
@@ -307,7 +275,7 @@ export function showInspectorView(deviceLog) {
 
 /**
  * Füllt den GATT-Baum *innerhalb* der Inspektor-Ansicht.
- * V9.2 HINWEIS: Verwendet die globalen Button-Referenzen.
+ * V10 PATCH: Aktiviert den "Schreiben"-Button.
  */
 export function renderGattTree(gattTree, deviceName, summary) {
     gattTreeContainer.innerHTML = ''; // Nur den Baum-Container leeren
@@ -359,8 +327,9 @@ export function renderGattTree(gattTree, deviceName, summary) {
                 
                 const props = char.properties;
                 const canRead = props.read ? '' : 'disabled';
-                const canWrite = props.write ? '' : 'disabled';
-                const canNotify = props.notify || props.indicate ? '' : 'disabled';
+                // V10 PATCH: Prüft 'write' ODER 'writeWithoutResponse'
+                const canWrite = (props.write || props.writeWithoutResponse) ? '' : 'disabled';
+                const canNotify = (props.notify || props.indicate) ? '' : 'disabled';
                 const valueElId = `val-${char.uuid}`;
 
                 charEl.innerHTML = `
@@ -378,6 +347,10 @@ export function renderGattTree(gattTree, deviceName, summary) {
                 
                 if (canRead === '') {
                     charEl.querySelector('.gatt-read-btn').addEventListener('click', () => appCallbacks.onRead(char.uuid));
+                }
+                // V10 HINZUGEFÜGT:
+                if (canWrite === '') {
+                    charEl.querySelector('.gatt-write-btn').addEventListener('click', () => appCallbacks.onWrite(char.uuid));
                 }
                 if (canNotify === '') {
                     charEl.querySelector('.gatt-notify-btn').addEventListener('click', (e) => {
@@ -414,7 +387,7 @@ export function updateCharacteristicValue(charUuid, value, isNotifying = false, 
 // === PUBLIC API: SETUP & BEACON UPDATE ===
 
 /**
- * V9.2 PATCH: Bindet ALLE Listener einmalig, einschließlich der Inspektor-Buttons.
+ * V9.2 PATCH: Bindet ALLE Listener einmalig
  */
 export function setupUIListeners(callbacks) {
     appCallbacks = callbacks;
@@ -430,7 +403,6 @@ export function setupUIListeners(callbacks) {
     staleToggle.addEventListener('change', handleStaleToggle);
     
     // V9.2 PATCH: Permanente Listener für Inspektor-Buttons
-    // Die Logik prüft die 'currentlyInspectedId' zum Zeitpunkt des Klicks.
     gattConnectButton.addEventListener('click', () => {
         if (currentlyInspectedId && appCallbacks.onGattConnect) {
             diagLog(`[TRACE] gattConnectButton Klick erfasst. ID: ${currentlyInspectedId.substring(0,4)}...`, 'info');
@@ -471,13 +443,12 @@ export function updateBeaconUI(deviceId, device) {
         card.id = deviceId;
         card.className = 'beacon-card';
         
-        diagLog(`[TRACE] updateBeaconUI: Prüfe 'isConnectable' (isInteresting) für ${device.id.substring(0, 4)}... Wert: ${device.isConnectable}`, 'utils');
+        // V9.13 HINWEIS: 'isConnectable' ist jetzt immer 'true'.
+        diagLog(`[TRACE] updateBeaconUI: Prüfe 'isConnectable' für ${device.id.substring(0, 4)}... Wert: ${device.isConnectable}`, 'utils');
         
-        // JEDE Karte ist klickbar
-        diagLog(`[TRACE] updateBeaconUI: Hänge click listener an ${device.id.substring(0, 4)}... an.`, 'info');
         card.addEventListener('click', () => {
             diagLog(`[TRACE] Klick auf Karte ${deviceId.substring(0, 4)}... in ui.js erkannt.`, 'info');
-            if (appCallbacks.onInspect) { // Ruft 'onInspect' auf
+            if (appCallbacks.onInspect) { 
                 diagLog(`[TRACE] Rufe appCallbacks.onInspect für ${deviceId.substring(0, 4)}... auf.`, 'info');
                 appCallbacks.onInspect(deviceId);
             } else {
