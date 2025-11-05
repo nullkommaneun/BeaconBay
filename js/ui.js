@@ -1,123 +1,100 @@
 /**
- * js/ui.js
+ * js/ui.js (Version 2 - Mit GATT-UI-Logik)
  * * ARCHITEKTUR-HINWEIS: Dies ist ein Modul auf Layer 2.
  * * ABHÄNGIGKEITEN: errorManager.js, utils.js
  * * ZWECK:
- * 1. Kapselt *alle* DOM-Manipulationen und Event-Listener (außer Log-Panel).
- * 2. Rendert die Beacon-Karten, inkl. der Chart.js-Sparklines.
- * 3. Nimmt Callbacks von app.js entgegen (Dependency Inversion), um
- * die UI-Logik von der Business-Logik (z.B. Scan starten) zu entkoppeln.
- * 4. Verwaltet den internen UI-Zustand (z.B. "Stale-Modus").
+ * 1. Kapselt *alle* DOM-Manipulationen (außer Log-Panel).
+ * 2. Verwaltet den UI-Zustand (View-Switching, Stale-Modus).
+ * 3. Rendert Beacon-Karten (inkl. Charts) und den GATT-Baum.
+ * 4. Nimmt Callbacks von app.js entgegen (Dependency Inversion).
  */
 
-// Importiere Abhängigkeiten
 import { diagLog } from './errorManager.js';
-import { calculateDistance } from './utils.js'; // Wird für die Distanzanzeige benötigt
+import { calculateDistance } from './utils.js'; // Für Distanzanzeige
 
 // === MODULE STATE ===
 
-// DOM-Elemente zwischenspeichern für Performance
-// WARUM: document.getElementById ist extrem schnell. Wir rufen dies
-// nur einmal beim Laden des Moduls auf, anstatt bei jeder
-// UI-Aktualisierung erneut im DOM zu suchen.
+// --- DOM-Elemente (gecacht) ---
 const scanButton = document.getElementById('scanButton');
 const disconnectButton = document.getElementById('disconnectButton');
-const viewToggle = document.getElementById('viewToggle'); // (Für später)
+const viewToggle = document.getElementById('viewToggle');
 const sortButton = document.getElementById('sortButton');
 const staleToggle = document.getElementById('staleToggle');
 const beaconDisplay = document.getElementById('beaconDisplay');
+const beaconView = document.getElementById('beacon-view');
+const gattView = document.getElementById('gatt-view');
+const gattDeviceName = document.getElementById('gatt-device-name');
+const gattTreeContainer = document.getElementById('gatt-tree-container');
+const gattDisconnectButton = document.getElementById('gattDisconnectButton');
 
-/**
- * Speichert den Status, ob der Stale-Modus (Ausblenden) aktiv ist.
- * @type {boolean}
- */
+
 let isStaleModeActive = false;
-
 /**
- * Speichert die Chart.js-Instanzen pro Geräte-ID.
- * WIE: { 'deviceId-123': chartInstance, ... }
+ * Speichert Chart.js-Instanzen (deviceId -> chartInstance)
  * @type {Map<string, Chart>}
  */
 const chartMap = new Map();
 
-// === PRIVATE HELPER FUNCTIONS ===
+/**
+ * Speichert die von app.js übergebenen Callbacks.
+ * @type {object}
+ */
+let appCallbacks = {};
+
+// === PRIVATE HELPER: CHARTING ===
 
 /**
- * Erstellt eine neue Chart.js-Sparkline-Instanz für eine Beacon-Karte.
- * @param {HTMLCanvasElement} canvas - Das Canvas-Element in der Karte.
- * @returns {Chart} Die neue Chart.js-Instanz.
+ * Erstellt eine neue Chart.js-Sparkline-Instanz.
+ * @param {HTMLCanvasElement} canvas - Das Canvas-Element.
+ * @returns {Chart} Die Chart.js-Instanz.
  */
 function createSparkline(canvas) {
     const ctx = canvas.getContext('2d');
     return new Chart(ctx, {
         type: 'line',
-        data: {
-            labels: [], // Zeit-Achse (ausgeblendet)
-            datasets: [{
-                label: 'RSSI',
-                data: [], // Die RSSI-Werte
-                borderColor: '#00faff', // Neon-Cyan
-                borderWidth: 2,
-                pointRadius: 0, // Keine Punkte
-                tension: 0.3 // Leicht geglättet
-            }]
+        data: { 
+            labels: [], 
+            datasets: [{ 
+                data: [], 
+                borderColor: '#00faff', 
+                borderWidth: 2, 
+                pointRadius: 0, 
+                tension: 0.3 
+            }] 
         },
         options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false }, // Keine Legende
-                tooltip: { enabled: false } // Keine Tooltips
-            },
-            scales: {
-                x: { display: false }, // X-Achse ausblenden
-                y: {
-                    display: false, // Y-Achse ausblenden
-                    suggestedMin: -100, // RSSI-Bereich (schwach)
-                    suggestedMax: -30   // RSSI-Bereich (stark)
-                }
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales: { 
+                x: { display: false }, 
+                y: { display: false, suggestedMin: -100, suggestedMax: -30 } 
             }
         }
     });
 }
 
 /**
- * Aktualisiert eine bestehende Sparkline mit einem neuen RSSI-Wert.
+ * Aktualisiert eine Sparkline mit einem neuen RSSI-Wert.
  * @param {Chart} chart - Die Chart.js-Instanz.
  * @param {number} rssi - Der neue RSSI-Wert.
  */
 function updateSparkline(chart, rssi) {
     const data = chart.data.datasets[0].data;
     const labels = chart.data.labels;
-
-    // Neuen Wert hinzufügen
     data.push(rssi);
-    labels.push(''); // Leeres Label hinzufügen
-
-    // WIE: Performance-Optimierung
-    // Wir begrenzen den Graphen auf 20 Datenpunkte (ca. 20 Sekunden bei 1s Intervall).
-    // 'shift()' entfernt das älteste Element und ist performant für Arrays.
+    labels.push('');
+    // Begrenze auf 20 Datenpunkte
     if (data.length > 20) {
         data.shift();
         labels.shift();
     }
-
-    // Chart aktualisieren, ohne Animation (für Echtzeit-Gefühl)
-    chart.update('none');
+    chart.update('none'); // Update ohne Animation
 }
 
-/**
- * Erstellt das HTML-Markup für eine Telemetrie-Zeile (RuuviTag).
- * @param {object} telemetry - Das Telemetrie-Objekt aus utils.js.
- * @returns {string} - HTML-String.
- */
+// === PRIVATE HELPER: RENDERING ===
+
 function renderTelemetry(telemetry) {
-    // Falls keine Daten vorhanden sind, leeren String zurückgeben.
-    if (Object.keys(telemetry).length === 0) {
-        return '';
-    }
-    
-    // WIE: Emojis zur schnellen visuellen Erfassung.
+    if (Object.keys(telemetry).length === 0) return '';
     return `
         <div class="beacon-telemetry">
             <span>🌡️ ${telemetry.temperature} °C</span>
@@ -128,68 +105,36 @@ function renderTelemetry(telemetry) {
     `;
 }
 
-/**
- * Erstellt das HTML-Markup für eine iBeacon-Zeile.
- * @param {object} beaconData - Das iBeacon-Objekt aus utils.js.
- * @returns {string} - HTML-String.
- */
 function renderBeaconData(beaconData) {
-    if (Object.keys(beaconData).length === 0) {
-        return '';
-    }
-    
+    if (Object.keys(beaconData).length === 0) return '';
     return `
         <div class="beacon-data">
             <div><strong>UUID:</strong> ${beaconData.uuid}</div>
-            <div>
-                <strong>Major:</strong> ${beaconData.major} | 
-                <strong>Minor:</strong> ${beaconData.minor}
-            </div>
+            <div><strong>Major:</strong> ${beaconData.major} | <strong>Minor:</strong> ${beaconData.minor}</div>
         </div>
     `;
 }
 
+// === PRIVATE HELPER: UI-AKTIONEN ===
+
 /**
- * Sortiert die Beacon-Karten im DOM basierend auf dem 'data-rssi'-Attribut.
- * * WIE: Dies ist eine direkte DOM-Operation. Sie liest das Attribut,
- * sortiert die Elemente (im Speicher) und fügt sie dann
- * in der neuen Reihenfolge wieder in das 'beaconDisplay'-Panel ein.
+ * Sortiert die Beacon-Karten im DOM nach 'data-rssi'.
  */
 function sortBeaconCards() {
     diagLog('Sortiere Karten nach RSSI...', 'utils');
-    
-    // 1. Hole alle Karten als Array
     const cards = Array.from(beaconDisplay.children);
-
-    // 2. Sortiere das Array
-    cards.sort((a, b) => {
-        // Lese den RSSI-Wert aus dem Dataset
-        // WARUM: + (Plus-Operator) konvertiert den String zu einer Zahl.
-        const rssiA = +a.dataset.rssi || -1000; // Fallback auf sehr kleinen Wert
-        const rssiB = +b.dataset.rssi || -1000;
-        
-        // Absteigend sortieren (stärkstes Signal zuerst)
-        return rssiB - rssiA;
-    });
-
-    // 3. Füge die sortierten Karten wieder ins DOM ein
-    // WIE: 'append' kann mehrere Elemente auf einmal annehmen.
-    // Da die Elemente bereits im DOM sind, werden sie *verschoben*,
-    // nicht dupliziert. Dies ist die effizienteste Methode.
+    // Sortiere absteigend (stärkstes Signal zuerst)
+    cards.sort((a, b) => (+b.dataset.rssi || -1000) - (+a.dataset.rssi || -1000));
+    // Effizientes Verschieben der DOM-Elemente
     beaconDisplay.append(...cards);
 }
 
 /**
- * (Interne Funktion) Verarbeitet den Klick auf den Stale-Toggle.
+ * Behandelt den Klick auf den Stale-Toggle.
  */
 function handleStaleToggle() {
     isStaleModeActive = staleToggle.checked;
-    
-    // WIE: Wir setzen eine Klasse auf den *Container*.
-    // Das CSS (style.css) kümmert sich um das eigentliche Ausblenden
-    // mittels: .stale-mode .stale { display: none; }
-    // Dies ist performanter, als hunderte Karten einzeln
-    // per JavaScript ein- und auszublenden.
+    // WIE: CSS-Klasse am Container ist performanter als JS-Loop.
     if (isStaleModeActive) {
         beaconDisplay.classList.add('stale-mode');
         diagLog('Stale-Modus aktiviert (verstecke inaktive).', 'utils');
@@ -199,30 +144,115 @@ function handleStaleToggle() {
     }
 }
 
-// === PUBLIC API ===
+// === PUBLIC API: VIEW-MANAGEMENT ===
 
 /**
- * Bindet die Event-Listener an die UI-Elemente.
- * * WARUM: Dependency Inversion. Dieses Modul weiß nicht, *was*
- * 'onScan' tut. Es ruft nur den Callback auf, den es
- * von app.js (dem Orchestrator) erhalten hat.
- *
- * @param {object} callbacks - Ein Objekt mit Callback-Funktionen.
- * @param {function} callbacks.onScan - Wird bei Klick auf #scanButton aufgerufen.
- * @param {function} callbacks.onDisconnect - Wird bei Klick auf #disconnectButton aufgerufen.
- * @param {function} callbacks.onSort - (Wird intern gehandhabt, könnte aber extern sein)
- * @param {function} callbacks.onStaleToggle - (Wird intern gehandhabt)
+ * Schaltet zwischen den Hauptansichten "beacon" und "gatt" um.
+ * @param {'beacon' | 'gatt'} viewName - Die anzuzeigende Ansicht.
  */
-export function setupUIListeners(callbacks) {
-    if (!scanButton || !disconnectButton || !sortButton || !staleToggle) {
-        diagLog('UI-Listener konnten nicht gebunden werden: DOM-Elemente fehlen.', 'error');
+export function showView(viewName) {
+    if (viewName === 'gatt') {
+        beaconView.style.display = 'none';
+        gattView.style.display = 'block';
+        viewToggle.textContent = 'Beacon-Ansicht'; 
+    } else {
+        gattView.style.display = 'none';
+        beaconView.style.display = 'block';
+        viewToggle.textContent = 'GATT-Ansicht (WIP)';
+    }
+}
+
+/**
+ * Setzt die GATT-Ansicht in einen "Verbinde..."-Zustand.
+ * @param {string} name - Der Name des Geräts.
+ */
+export function showConnectingState(name) {
+    showView('gatt');
+    gattDeviceName.textContent = `Verbinde mit: ${name}...`;
+    gattTreeContainer.innerHTML = '<p>Verbinde und lese Services...</p>';
+}
+
+// === PUBLIC API: GATT-RENDERING ===
+
+/**
+ * Rendert den gesamten GATT-Baum (Services & Characteristics).
+ * @param {Array<object>} gattTree - Der von bluetooth.js erstellte Baum.
+ * @param {string} deviceName - Der Name des verbundenen Geräts.
+ */
+export function renderGattTree(gattTree, deviceName) {
+    if (gattTree.length === 0) {
+        gattTreeContainer.innerHTML = '<p>Keine Services auf diesem Gerät gefunden.</p>';
         return;
     }
 
-    scanButton.addEventListener('click', callbacks.onScan);
-    disconnectButton.addEventListener('click', callbacks.onDisconnect);
+    gattDeviceName.textContent = `Verbunden mit: ${deviceName || 'Unbenannt'}`;
+    gattTreeContainer.innerHTML = ''; // Baum leeren
     
-    // UI-interne Aktionen können direkt hier gebunden werden.
+    gattTree.forEach(service => {
+        const serviceEl = document.createElement('div');
+        serviceEl.className = 'gatt-service';
+        
+        serviceEl.innerHTML = `
+            <div class="gatt-service-header">
+                <strong>Service</strong>
+                <div>UUID: ${service.uuid}</div>
+            </div>
+        `;
+        
+        const charListEl = document.createElement('div');
+        charListEl.className = 'gatt-char-list';
+        
+        if (service.characteristics.length === 0) {
+            charListEl.innerHTML = '<p>Keine Characteristics für diesen Service gefunden.</p>';
+        } else {
+            service.characteristics.forEach(char => {
+                const charEl = document.createElement('div');
+                charEl.className = 'gatt-char';
+                
+                // TODO: 'properties' parsen (read, write) und Buttons aktivieren
+                
+                charEl.innerHTML = `
+                    <div>
+                        <div class="gatt-char-name">Characteristic</div>
+                        <div class="gatt-char-uuid">UUID: ${char.uuid}</div>
+                    </div>
+                    <div class="gatt-char-actions">
+                        <button disabled>Lesen</button>
+                        <button disabled>Schreiben</button>
+                        <button disabled>Abonnieren</button>
+                    </div>
+                `;
+                charListEl.appendChild(charEl);
+            });
+        }
+        
+        serviceEl.appendChild(charListEl);
+        gattTreeContainer.appendChild(serviceEl);
+    });
+}
+
+// === PUBLIC API: SETUP & UPDATE ===
+
+/**
+ * Bindet die Event-Listener an die UI-Elemente.
+ * @param {object} callbacks - Ein Objekt mit Callback-Funktionen von app.js.
+ */
+export function setupUIListeners(callbacks) {
+    appCallbacks = callbacks; // Callbacks für interne Nutzung speichern
+
+    scanButton.addEventListener('click', callbacks.onScan);
+    disconnectButton.addEventListener('click', callbacks.onStopScan);
+    gattDisconnectButton.addEventListener('click', callbacks.onGattDisconnect);
+    
+    viewToggle.addEventListener('click', () => {
+        if (beaconView.style.display === 'none') {
+            showView('beacon');
+        } else {
+            showView('gatt'); // (Wird meist leer sein, wenn nicht verbunden)
+        }
+    });
+    
+    // UI-interne Aktionen
     sortButton.addEventListener('click', sortBeaconCards);
     staleToggle.addEventListener('change', handleStaleToggle);
     
@@ -230,7 +260,7 @@ export function setupUIListeners(callbacks) {
 }
 
 /**
- * Setzt den visuellen Status der Scan-Buttons (aktiv/inaktiv).
+ * Setzt den visuellen Status der Scan-Buttons.
  * @param {boolean} isScanning - True, wenn der Scan läuft.
  */
 export function setScanStatus(isScanning) {
@@ -251,7 +281,6 @@ export function setScanStatus(isScanning) {
  * @param {object} device - Das von utils.js geparste Geräte-Objekt.
  */
 export function updateBeaconUI(deviceId, device) {
-    // 1. Prüfen, ob die Karte bereits existiert
     let card = document.getElementById(deviceId);
     
     if (!card) {
@@ -260,8 +289,14 @@ export function updateBeaconUI(deviceId, device) {
         card.id = deviceId;
         card.className = 'beacon-card';
         
-        // WIE: Wir erstellen das gesamte interne DOM der Karte
-        // und fügen es am Ende *einmal* hinzu (besser für Performance).
+        // WIE: Dependency Inversion. Wir rufen den Callback
+        // 'onConnect' auf, den app.js uns gegeben hat.
+        card.addEventListener('click', () => {
+            if (appCallbacks.onConnect) {
+                appCallbacks.onConnect(deviceId);
+            }
+        });
+        
         card.innerHTML = `
             <h3>${device.name}</h3>
             <div class="beacon-meta">
@@ -269,94 +304,59 @@ export function updateBeaconUI(deviceId, device) {
                 <span><strong>Firma:</strong> ${device.company}</span>
                 <span><strong>Typ:</strong> ${device.type}</span>
             </div>
-            
             <div class="beacon-signal">
                 <strong>RSSI:</strong> <span class="rssi-value">${device.rssi} dBm</span> | 
                 <strong>Distanz:</strong> <span class="distance-value">...</span>
             </div>
-
             ${renderTelemetry(device.telemetry)}
             ${renderBeaconData(device.beaconData)}
-
-            <div class="sparkline-container">
-                <canvas></canvas>
-            </div>
+            <div class="sparkline-container"><canvas></canvas></div>
         `;
-        
-        // Karte dem DOM hinzufügen
-        beaconDisplay.prepend(card); // Neue Geräte oben anzeigen
+        beaconDisplay.prepend(card);
 
         // Sparkline initialisieren
         const canvas = card.querySelector('canvas');
         if (canvas) {
-            const chart = createSparkline(canvas);
-            chartMap.set(deviceId, chart); // Chart-Instanz speichern
-        }
-
-    } else {
-        // === Karte AKTUALISIEREN ===
-        
-        // Aktualisiere nur die Teile, die sich ändern
-        // (Vermeidet 'innerHTML' bei Updates, was performanter ist)
-        
-        const rssiEl = card.querySelector('.rssi-value');
-        if (rssiEl) rssiEl.textContent = `${device.rssi} dBm`;
-        
-        // WARUM: Wir speichern den RSSI im Dataset, damit die
-        // Sortierfunktion (sortBeaconCards) schnell darauf zugreifen kann,
-        // ohne den Text-Inhalt parsen zu müssen.
-        card.dataset.rssi = device.rssi;
-
-        // Aktualisiere Distanz
-        const distanceEl = card.querySelector('.distance-value');
-        if (distanceEl) {
-            // Rufe die Hilfsfunktion aus utils.js auf
-            distanceEl.textContent = calculateDistance(device.txPower, device.rssi);
-        }
-
-        // Aktualisiere Telemetrie (falls sie sich ändern kann)
-        // (Für diese App überschreiben wir es einfach, da Ruuvi-Updates selten sind)
-        const telemetryEl = card.querySelector('.beacon-telemetry');
-        if (telemetryEl) {
-            telemetryEl.innerHTML = renderTelemetry(device.telemetry).trim();
+            chartMap.set(deviceId, createSparkline(canvas));
         }
     }
 
-    // 2. Sparkline (immer) aktualisieren
+    // === Karte AKTUALISIEREN (immer) ===
+    card.querySelector('.rssi-value').textContent = `${device.rssi} dBm`;
+    // WICHTIG: Speichere RSSI im Dataset für schnelle Sortierung
+    card.dataset.rssi = device.rssi;
+    card.querySelector('.distance-value').textContent = calculateDistance(device.txPower, device.rssi);
+    
+    const telemetryEl = card.querySelector('.beacon-telemetry');
+    if (telemetryEl) telemetryEl.innerHTML = renderTelemetry(device.telemetry).trim();
+
     const chart = chartMap.get(deviceId);
     if (chart) {
         updateSparkline(chart, device.rssi);
     }
     
-    // 3. Stale-Status zurücksetzen (wird von bluetooth.js gehandhabt)
-    // Wenn wir ein Update erhalten, ist das Gerät offensichtlich nicht "stale".
+    // Gerät ist aktiv, "stale"-Markierung entfernen
     card.classList.remove('stale');
 }
 
 /**
  * Markiert eine Beacon-Karte visuell als "stale" (veraltet).
- * Wird von bluetooth.js aufgerufen.
- * @param {string} deviceId - Die ID der Karte, die markiert werden soll.
+ * @param {string} deviceId - Die ID der Karte.
  */
 export function setCardStale(deviceId) {
     const card = document.getElementById(deviceId);
-    if (card) {
-        card.classList.add('stale');
-    }
+    if (card) card.classList.add('stale');
 }
 
 /**
- * (Wird von bluetooth.js aufgerufen) Bereinigt die UI, wenn der Scan stoppt.
+ * Bereinigt die UI (Beacon-Karten und Charts), wenn der Scan stoppt.
  */
 export function clearUI() {
     diagLog('Bereinige UI und lösche Beacon-Karten...', 'ui');
     beaconDisplay.innerHTML = '';
     
-    // Lösche alle gespeicherten Chart-Instanzen
-    // WICHTIG: Chart.js-Instanzen müssen 'destroyed' werden,
-    // um Memory-Leaks durch hängende Canvas-Referenzen zu vermeiden.
-    chartMap.forEach(chart => {
-        chart.destroy();
-    });
+    // WICHTIG: Chart-Instanzen zerstören, um Memory-Leaks zu vermeiden
+    chartMap.forEach(chart => chart.destroy());
     chartMap.clear();
 }
+ 
