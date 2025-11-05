@@ -1,8 +1,8 @@
 /**
- * js/ui.js (Version 5 - Mit Eddystone-Rendering)
+ * js/ui.js (Version 6 - Korrigierter View-Toggle-Text)
  * * ARCHITEKTUR-HINWEIS:
- * - renderBeaconData kann jetzt 'url', 'uid' und 'telemetry'
- * (von Eddystone-TLM) anzeigen.
+ * - Behebt den "(WIP)"-Text im 'viewToggle'-Button.
+ * - Der Button zeigt jetzt immer korrekt die Ansicht an, zu der gewechselt wird.
  */
 
 import { diagLog } from './errorManager.js';
@@ -48,10 +48,8 @@ function updateSparkline(chart, rssi) {
 }
 
 // === PRIVATE HELPER: RENDERING ===
-
 function renderTelemetry(telemetry) {
-    // Dieser Renderer ist für Ruuvi-Daten.
-    if (!telemetry.temperature) return '';
+    if (!telemetry.temperature) return ''; // Prüft auf ein Ruuvi-spezifisches Feld
     return `
         <div class="beacon-telemetry">
             <span>🌡️ ${telemetry.temperature} °C</span>
@@ -62,43 +60,25 @@ function renderTelemetry(telemetry) {
     `;
 }
 
-/**
- * NEU: Rendert iBeacon, Eddystone-URL, Eddystone-UID und Eddystone-TLM.
- * @param {object} beaconData - Das beaconData-Objekt von utils.js.
- * @returns {string} - Der HTML-String.
- */
 function renderBeaconData(beaconData) {
     if (Object.keys(beaconData).length === 0) return '';
-
     let html = '<div class="beacon-data">';
     
-    // Fall 1: iBeacon
-    if (beaconData.uuid) {
+    if (beaconData.uuid) { // iBeacon
         html += `
             <div><strong>UUID:</strong> ${beaconData.uuid}</div>
-            <div>
-                <strong>Major:</strong> ${beaconData.major} | 
-                <strong>Minor:</strong> ${beaconData.minor}
-            </div>
+            <div><strong>Major:</strong> ${beaconData.major} | <strong>Minor:</strong> ${beaconData.minor}</div>
         `;
     }
-    
-    // Fall 2: Eddystone-URL
-    if (beaconData.url) {
+    if (beaconData.url) { // Eddystone-URL
         html += `
             <div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>
         `;
     }
-    
-    // Fall 3: Eddystone-UID
-    if (beaconData.uid) {
-        html += `
-            <div><strong>UID:</strong> ${beaconData.uid}</div>
-        `;
+    if (beaconData.uid) { // Eddystone-UID
+        html += `<div><strong>UID:</strong> ${beaconData.uid}</div>`;
     }
-    
-    // Fall 4: Eddystone-TLM (Telemetry)
-    if (beaconData.telemetry) {
+    if (beaconData.telemetry) { // Eddystone-TLM
         const tlm = beaconData.telemetry;
         html += `
             <div class="beacon-telemetry">
@@ -109,7 +89,6 @@ function renderBeaconData(beaconData) {
             </div>
         `;
     }
-
     html += '</div>';
     return html;
 }
@@ -131,17 +110,25 @@ function handleStaleToggle() {
 }
 
 // === PUBLIC API: VIEW-MANAGEMENT ===
+
+/**
+ * KORRIGIERT: Schaltet zwischen den Hauptansichten um und setzt den Text
+ * des 'viewToggle'-Buttons korrekt.
+ * @param {'beacon' | 'gatt'} viewName - Die anzuzeigende Ansicht.
+ */
 export function showView(viewName) {
     if (viewName === 'gatt') {
         beaconView.style.display = 'none';
         gattView.style.display = 'block';
-        viewToggle.textContent = 'Beacon-Ansicht'; 
+        viewToggle.textContent = 'Beacon-Ansicht'; // Zeigt an, wohin man zurückkehrt
     } else {
+        // Standard ist Beacon-Ansicht
         gattView.style.display = 'none';
         beaconView.style.display = 'block';
-        viewToggle.textContent = 'GATT-Ansicht (WIP)';
+        viewToggle.textContent = 'GATT-Ansicht'; // KORRIGIERT: (WIP) entfernt
     }
 }
+
 export function showConnectingState(name) {
     showView('gatt');
     gattDeviceName.textContent = `Verbinde mit: ${name}...`;
@@ -245,9 +232,15 @@ export function setupUIListeners(callbacks) {
     disconnectButton.addEventListener('click', callbacks.onStopScan);
     gattDisconnectButton.addEventListener('click', callbacks.onGattDisconnect);
     
+    // KORRIGIERT: Der Toggle-Listener sollte explizit umschalten
     viewToggle.addEventListener('click', () => {
-        if (beaconView.style.display === 'none') showView('beacon');
-        else showView('gatt');
+        // Prüft, welche Ansicht *aktuell* sichtbar ist, und schaltet um
+        if (beaconView.style.display === 'none') {
+            showView('beacon');
+        } else {
+            // Zeigt die (leere) GATT-Ansicht, auch wenn nicht verbunden
+            showView('gatt'); 
+        }
     });
     
     sortButton.addEventListener('click', sortBeaconCards);
@@ -268,16 +261,10 @@ export function setScanStatus(isScanning) {
     }
 }
 
-/**
- * Die Haupt-Rendering-Funktion. Erstellt oder aktualisiert eine Beacon-Karte.
- * @param {string} deviceId - Die eindeige ID des Geräts.
- * @param {object} device - Das von utils.js geparste Geräte-Objekt.
- */
 export function updateBeaconUI(deviceId, device) {
     let card = document.getElementById(deviceId);
     
     if (!card) {
-        // === Karte ERSTELLEN ===
         card = document.createElement('div');
         card.id = deviceId;
         card.className = 'beacon-card';
@@ -292,7 +279,6 @@ export function updateBeaconUI(deviceId, device) {
             card.classList.add('not-connectable');
         }
         
-        // HINWEIS: renderBeaconData wird jetzt die neuen Eddystone-Typen handhaben
         card.innerHTML = `
             <h3>${device.name}</h3>
             <div class="beacon-meta">
@@ -317,9 +303,8 @@ export function updateBeaconUI(deviceId, device) {
     // === Karte AKTUALISIEREN (immer) ===
     card.querySelector('.rssi-value').textContent = `${device.rssi} dBm`;
     card.dataset.rssi = device.rssi;
-    card.querySelector('.distance-value').textContent = calculateDistance(device.txPower, device.rssi);
+    card.querySelector('.distance-value').textContent = calculateDistance(device.txPower, device.rssDsi);
     
-    // HINWEIS: Wir müssen hier die Daten-Container aktualisieren
     const telemetryEl = card.querySelector('.beacon-telemetry');
     if (telemetryEl) telemetryEl.innerHTML = renderTelemetry(device.telemetry).trim();
 
