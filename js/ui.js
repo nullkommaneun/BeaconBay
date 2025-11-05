@@ -1,11 +1,9 @@
 /**
- * js/ui.js (Version 9 - Inspektor-Modell)
- * * ARCHITEKTUR-HINWEIS:
- * - Behebt den 'Cannot read properties of null' Crash, da
- * jetzt die korrekten IDs (inspector-view, beacon-view) verwendet werden.
- * - Klick auf Karte löst 'onInspect' aus (Scan läuft weiter).
- * - 'showInspectorView' (neu) füllt die Inspektor-Ansicht.
- * - 'renderGattTree' füllt nur noch den GATT-Baum *innerhalb* des Inspektors.
+ * js/ui.js (Version 9.1 - Inspektor-Modell & Industrial-Highlight)
+ * * ARCHITEKTUR-HINWEIS: Layer 2 Modul.
+ * - Behebt den "Cannot read properties of null" Crash durch Verwendung der korrekten IDs (inspector-view, beacon-view).
+ * - Implementiert das "Inspektor-Modell" (Klick -> Inspizieren, nicht Verbinden).
+ * - Enthält die 'INDUSTRIAL_COMPANIES'-Liste, um relevante Geräte hervorzuheben.
  */
 
 import { diagLog } from './errorManager.js';
@@ -26,9 +24,9 @@ const staleToggle = document.getElementById('staleToggle');
 const beaconDisplay = document.getElementById('beaconDisplay');
 const downloadButton = document.getElementById('downloadButton');
 
-// NEU: Geteilte Ansichten
+// NEU: Geteilte Ansichten, behebt den Crash
 const beaconView = document.getElementById('beacon-view');
-const inspectorView = document.getElementById('inspector-view');
+const inspectorView = document.getElementById('inspector-view'); // (war gatt-view)
 
 // Inspektor-Ansicht Elemente
 const inspectorDeviceName = document.getElementById('inspectorDeviceName');
@@ -47,12 +45,21 @@ let appCallbacks = {};
 
 /**
  * NEU: Liste der Firmen, die wir als "Industrie-relevant" einstufen.
+ * (Stellen Sie sicher, dass diese mit Ihrer 'company_ids.json' übereinstimmen)
  */
 const INDUSTRIAL_COMPANIES = [
-    'Nordic Semiconductor ASA', 'Texas Instruments', 'Silicon Labs', 
-    'Espressif Inc.', 'Intel Corp.', 'Qualcomm', 'Siemens AG', 
-    'Robert Bosch GmbH', 'KUKA AG', 'Phoenix Contact', 
-    'Murata Manufacturing Co., Ltd.', 'Volkswagen AG'
+    'Nordic Semiconductor ASA',
+    'Texas Instruments',
+    'Silicon Labs',
+    'Espressif Inc.',
+    'Intel Corp.',
+    'Qualcomm',
+    'Siemens AG',
+    'Robert Bosch GmbH',
+    'KUKA AG',
+    'Phoenix Contact',
+    'Murata Manufacturing Co., Ltd.',
+    'Volkswagen AG'
 ];
 
 
@@ -83,7 +90,7 @@ function updateSparkline(chart, rssi) {
 // === PRIVATE HELPER: RENDERING ===
 
 function renderTelemetry(telemetry) {
-    if (!telemetry.temperature) return ''; 
+    if (!telemetry.temperature) return ''; // Prüft auf ein Ruuvi-spezifisches Feld
     return `
         <div class="beacon-telemetry">
             <span>🌡️ ${telemetry.temperature} °C</span>
@@ -98,19 +105,21 @@ function renderBeaconData(beaconData) {
     if (Object.keys(beaconData).length === 0) return '';
     let html = '<div class="beacon-data">';
     
-    if (beaconData.uuid) {
+    if (beaconData.uuid) { // iBeacon
         html += `
             <div><strong>UUID:</strong> ${beaconData.uuid}</div>
             <div><strong>Major:</strong> ${beaconData.major} | <strong>Minor:</strong> ${beaconData.minor}</div>
         `;
     }
-    if (beaconData.url) {
-        html += `<div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>`;
+    if (beaconData.url) { // Eddystone-URL
+        html += `
+            <div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>
+        `;
     }
-    if (beaconData.uid) {
+    if (beaconData.uid) { // Eddystone-UID
         html += `<div><strong>UID:</strong> ${beaconData.uid}</div>`;
     }
-    if (beaconData.telemetry) {
+    if (beaconData.telemetry) { // Eddystone-TLM
         const tlm = beaconData.telemetry;
         html += `
             <div class="beacon-telemetry">
@@ -169,24 +178,35 @@ export function showView(viewName) {
  * @param {boolean} [isConnected=false] - Ob die Verbindung erfolgreich war.
  */
 export function setGattConnectingUI(isConnecting, error = null, isConnected = false) {
+    const connectBtn = document.getElementById('gattConnectButton');
+    const disconnectBtn = document.getElementById('gattDisconnectButton');
+
     if (isConnecting) {
-        gattConnectButton.disabled = true;
-        gattConnectButton.textContent = 'Verbinde...';
-        gattDisconnectButton.disabled = true;
-        gattTreeContainer.innerHTML = '<p>Verbinde und lese Services...</p>';
+        if (connectBtn) {
+            connectBtn.disabled = true;
+            connectBtn.textContent = 'Verbinde...';
+        }
+        if (disconnectBtn) disconnectBtn.disabled = true;
+        if (gattTreeContainer) gattTreeContainer.innerHTML = '<p>Verbinde und lese Services...</p>';
     } else if (isConnected) {
-        gattConnectButton.disabled = true;
-        gattConnectButton.textContent = 'Verbunden';
-        gattDisconnectButton.disabled = false;
+        if (connectBtn) {
+            connectBtn.disabled = true;
+            connectBtn.textContent = 'Verbunden';
+        }
+        if (disconnectBtn) disconnectBtn.disabled = false;
     } else {
         // Fehler oder normale Trennung
-        gattConnectButton.disabled = false;
-        gattConnectButton.textContent = 'Verbinden';
-        gattDisconnectButton.disabled = true;
-        if (error) {
-            gattTreeContainer.innerHTML = `<p style="color:var(--error-color);">Verbindung fehlgeschlagen: ${error}</p>`;
-        } else {
-            gattTreeContainer.innerHTML = '<p>Getrennt. Klicken Sie auf "Verbinden", um den GATT-Baum zu laden.</p>';
+        if (connectBtn) {
+            connectBtn.disabled = false;
+            connectBtn.textContent = 'Verbinden';
+        }
+        if (disconnectBtn) disconnectBtn.disabled = true;
+        if (gattTreeContainer) {
+            if (error) {
+                gattTreeContainer.innerHTML = `<p style="color:var(--error-color);">Verbindung fehlgeschlagen: ${error}</p>`;
+            } else {
+                gattTreeContainer.innerHTML = '<p>Getrennt. Klicken Sie auf "Verbinden", um den GATT-Baum zu laden.</p>';
+            }
         }
     }
 }
@@ -283,6 +303,18 @@ export function showInspectorView(deviceLog) {
  */
 export function renderGattTree(gattTree, deviceName, summary) {
     gattTreeContainer.innerHTML = ''; // Nur den Baum-Container leeren
+    
+    // Update: Buttons nach erfolgreicher Verbindung setzen
+    const connectBtn = document.getElementById('gattConnectButton');
+    const disconnectBtn = document.getElementById('gattDisconnectButton');
+    
+    if(connectBtn) {
+        connectBtn.disabled = true;
+        connectBtn.textContent = 'Verbunden';
+    }
+    if(disconnectBtn) {
+        disconnectBtn.disabled = false;
+    }
     
     // === 1. ZUSAMMENFASSUNG FÜLLEN ===
     if (summary && Object.keys(summary).length > 0) {
