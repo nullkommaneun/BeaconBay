@@ -1,17 +1,17 @@
 /**
- * js/app.js (Version 9.5 - GATT-Stabilitätspatch)
+ * js/app.js (Version 9.7 - Handshake-Workflow-Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - gattConnectAction ist jetzt 'async' und wartet auf das Ergebnis
- * von connectToDevice.
- * - Wenn connectToDevice 'false' zurückgibt (Verbindung fehlgeschlagen),
- * wird scanAction() automatisch aufgerufen, um den Scan neu zu starten
- * und die App stabil zu halten.
+ * - Implementiert den korrekten 2-Phasen-Handshake.
+ * - gattConnectAction ruft bluetooth.requestDeviceForHandshake() auf (Scan läuft).
+ * - ERST WENN erfolgreich, stoppt app.js den Scan (und KeepAlive)
+ * und ruft bluetooth.connectWithAuthorizedDevice() auf.
  */
 
 // Heartbeat
 window.__app_heartbeat = false;
 
 function earlyDiagLog(msg, isError = false) {
+    // ... (unverändert)
     try {
         const panel = document.getElementById('diag-log-panel');
         if (panel) {
@@ -28,9 +28,12 @@ async function initApp() {
     let diagLog, initGlobalErrorHandler;
     let startKeepAlive, stopKeepAlive;
     let loadCompanyIDs;
-    let setupUIListeners, showInspectorView, showView; // UI-Funktionen
-    let initBluetooth, startScan, stopScan, connectToDevice, disconnect,
+    // V9.7 HINWEIS: setGattConnectingUI wird für Fehler-Feedback benötigt
+    let setupUIListeners, showInspectorView, showView, setGattConnectingUI; 
+    let initBluetooth, startScan, stopScan, disconnect,
         readCharacteristic, startNotifications; // Bluetooth-Funktionen
+    // V9.7 HINWEIS: connectToDevice wird ersetzt
+    let requestDeviceForHandshake, connectWithAuthorizedDevice;
     let getDeviceLog, generateLogFile; // Logger-Funktionen
 
     try {
@@ -63,13 +66,16 @@ async function initApp() {
         setupUIListeners = uiModule.setupUIListeners;
         showInspectorView = uiModule.showInspectorView;
         showView = uiModule.showView;
+        setGattConnectingUI = uiModule.setGattConnectingUI; // V9.7 HINZUFÜGEN
         
         diagLog('Lade Layer 3 (bluetooth.js)...', 'utils');
         const bluetoothModule = await import('./bluetooth.js');
         initBluetooth = bluetoothModule.initBluetooth;
         startScan = bluetoothModule.startScan;
         stopScan = bluetoothModule.stopScan;
-        connectToDevice = bluetoothModule.connectToDevice;
+        // V9.7 ERSETZT: connectToDevice
+        requestDeviceForHandshake = bluetoothModule.requestDeviceForHandshake;
+        connectWithAuthorizedDevice = bluetoothModule.connectWithAuthorizedDevice;
         disconnect = bluetoothModule.disconnect;
         readCharacteristic = bluetoothModule.readCharacteristic;
         startNotifications = bluetoothModule.startNotifications;
@@ -109,31 +115,40 @@ async function initApp() {
         };
         
         /**
-         * V9.5 PATCH: Wird 'async' gemacht, um auf das Ergebnis
-         * von connectToDevice zu warten.
-         * Stoppt den Scan, versucht zu verbinden. Wenn es fehlschlägt,
-         * wird der Scan (scanAction) neu gestartet.
+         * V9.7 PATCH: Implementiert den korrekten Handshake-Workflow.
+         * 1. Handshake anfordern (Scan läuft weiter).
+         * 2. Bei Erfolg: Scan stoppen und mit autorisiertem Gerät verbinden.
+         * 3. Bei Misserfolg: Nichts tun (Scan läuft weiter, App bleibt stabil).
          */
-        const gattConnectAction = async (deviceId) => { // 'async' hinzugefügt
-            diagLog(`Aktion: Verbinde GATT für ${deviceId.substring(0, 4)}...`, 'bt');
+        const gattConnectAction = async (deviceId) => {
+            diagLog(`Aktion: GATT-Handshake für ${deviceId.substring(0, 4)}... anfordern`, 'bt');
             
-            // 1. Scan stoppen (wie bisher)
+            // 1. Handshake anfordern (Scan läuft weiter)
+            const authorizedDevice = await requestDeviceForHandshake(deviceId);
+            
+            // 2. Prüfen, ob Handshake erfolgreich war (Benutzer hat Pop-up bestätigt)
+            if (!authorizedDevice) {
+                diagLog('Handshake vom Benutzer abgelehnt oder fehlgeschlagen. Scan läuft weiter.', 'bt');
+                // Setze die UI zurück (Ladebalken aus), aber bleibe im Inspektor
+                setGattConnectingUI(false, 'Handshake abgelehnt');
+                return; 
+            }
+        
+            // 3. Handshake ERFOLGREICH. JETZT Scan stoppen.
+            diagLog(`Handshake erfolgreich für ${authorizedDevice.name}. Stoppe Scan...`, 'bt');
             stopScan();
             stopKeepAlive();
             
-            // 2. Bluetooth-Modul anweisen, zu verbinden UND auf Ergebnis warten
-            const success = await connectToDevice(deviceId); // 'await' hinzugefügt
+            // 4. Mit dem autorisierten Gerät verbinden
+            diagLog(`Verbinde mit autorisiertem Gerät...`, 'bt');
+            const success = await connectWithAuthorizedDevice(authorizedDevice);
             
-            // 3. V9.5 PATCH: Bei Misserfolg, Scan neu starten
+            // 5. V9.5-Fallback (falls Verbindung TROTZ Handshake fehlschlägt)
             if (!success) {
-                diagLog('GATT-Verbindung fehlgeschlagen. Starte Scan neu...', 'bt');
-                
-                // scanAction() startet den Scan neu UND bluetooth.js (startScan)
-                // wird die UI (via showView('beacon')) zurücksetzen.
+                diagLog('Verbindung trotz Handshake fehlgeschlagen. Starte Scan neu...', 'bt');
                 scanAction(); 
             }
-            // Wenn 'success' true ist, tun wir nichts. 
-            // Der Benutzer ist dann verbunden und im Inspektor.
+            // Wenn 'success' true ist, sind wir verbunden und im Inspektor.
         };
         
         const gattDisconnectAction = () => {
@@ -173,7 +188,7 @@ async function initApp() {
             onRead: readAction,
             onNotify: notifyAction,
             onDownload: downloadAction,
-            onGetDeviceLog: getDeviceLog, // (Für V9.2 UI-Patch)
+            onGetDeviceLog: getDeviceLog,
             onSort: () => {}, 
             onStaleToggle: () => {} 
         });
