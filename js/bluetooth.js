@@ -1,10 +1,7 @@
 /**
- * js/bluetooth.js (Version 6.2 - Vollständig & Korrigiert)
- * * ARCHITEKTUR-HINWEIS: Layer 3 Modul.
- * * KORREKTUR (V6.2):
- * - Greift jetzt korrekt auf 'event.device.connectable' statt 'event.connectable' zu.
- * - Enthält die vollständige, nicht-leere 'stopScan' Funktion.
- * - Übergibt den korrekten Wert an die UI und den Logger.
+ * js/bluetooth.js (Version 6.3 - Mit Fehler-Trace-Route)
+ * * ARCHITEKTUR-HINWEIS:
+ * - Fügt [TRACE]-Logs hinzu, um den 'connectable'-Flag-Flow zu debuggen.
  */
 
 import { diagLog } from './errorManager.js';
@@ -34,26 +31,20 @@ const STALE_CHECK_INTERVAL_MS = 2000;
 
 // === PRIVATE HELPER: SCANNING ===
 
-/**
- * Callback für 'advertisementreceived'.
- * @param {Event} event - Das Advertisement-Event.
- */
 function handleAdvertisement(event) {
     try {
-        // 1. Logger füttern (Logger V3 greift intern korrekt zu)
         logAdvertisement(event);
         
-        // 2. Daten für die Echtzeit-UI parsen
         const { device } = event;
-        
-        // ==== HIER IST DIE 'connectable'-KORREKTUR ====
-        // Das Flag 'connectable' ist eine Eigenschaft von 'device', nicht von 'event'.
         const { connectable } = device; 
+
+        // ==== [TRACE 1] ====
+        // Was meldet der Browser *wirklich*?
+        diagLog(`[TRACE] handleAdvertisement: Gerät ${device.id.substring(0, 4)}... hat connectable=${connectable}`, 'utils');
 
         const parsedData = parseAdvertisementData(event);
         if (!parsedData) return; 
         
-        // Korrekten Wert an das geparste Objekt für die UI anhängen
         parsedData.isConnectable = connectable;
         
         deviceMap.set(device.id, {
@@ -61,8 +52,9 @@ function handleAdvertisement(event) {
             parsedData: parsedData
         });
         
-        // 3. UI aktualisieren
+        // Wir übergeben das Objekt mit 'isConnectable' an die UI
         updateBeaconUI(device.id, parsedData);
+
     } catch (err) {
         diagLog(`Fehler in handleAdvertisement: ${err.message}`, 'error');
     }
@@ -87,7 +79,7 @@ function onGattDisconnect() {
 
 function handleValueChange(event) {
     const charUuid = event.target.uuid;
-    const value = event.target.value; // DataView
+    const value = event.target.value; 
     diagLog(`[Notify] Neuer Wert für ${charUuid}:`, 'bt');
     updateCharacteristicValue(charUuid, value);
 }
@@ -99,10 +91,7 @@ export function initBluetooth() {
     gattCharacteristicMap.clear();
     if (staleCheckInterval) clearInterval(staleCheckInterval);
     staleCheckInterval = null;
-    
-    // Logger ebenfalls initialisieren
     initLogger();
-    
     diagLog('Bluetooth-Modul initialisiert (Maps geleert).', 'bt');
 }
 
@@ -119,8 +108,6 @@ export async function startScan() {
         });
         
         diagLog('Scan aktiv. Warte auf Advertisements...', 'bt');
-        
-        // Dem Logger sagen, dass der Scan jetzt läuft
         setScanStart();
         
         navigator.bluetooth.addEventListener('advertisementreceived', handleAdvertisement);
@@ -134,7 +121,6 @@ export async function startScan() {
 
 export function stopScan() {
     navigator.bluetooth.removeEventListener('advertisementreceived', handleAdvertisement);
-
     if (activeScan && activeScan.active) {
         try {
             activeScan.stop();
@@ -144,25 +130,26 @@ export function stopScan() {
         }
         activeScan = null;
     }
-    
     if (staleCheckInterval) {
         clearInterval(staleCheckInterval);
         staleCheckInterval = null;
     }
-    
-    // WICHTIG: UI-Status zurücksetzen
     setScanStatus(false);
     diagLog('Scan-Ressourcen bereinigt.', 'bt');
 }
 
 export function disconnect() {
     if (!gattServer) return;
-    gattServer.disconnect(); // Löst onGattDisconnect via Event aus
+    gattServer.disconnect(); 
 }
 
 // === PUBLIC API: GATT INTERACTION ===
 
 export async function connectToDevice(deviceId) {
+    // ==== [TRACE 5] ====
+    // Ist der Klick-Befehl überhaupt hier angekommen?
+    diagLog(`[TRACE] connectToDevice(${deviceId.substring(0, 4)}...) in bluetooth.js gestartet.`, 'bt');
+
     const deviceData = deviceMap.get(deviceId);
     if (!deviceData) return diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
     
@@ -187,7 +174,6 @@ export async function connectToDevice(deviceId) {
         const gattTree = [];
         for (const service of services) {
             const serviceData = { uuid: service.uuid, characteristics: [] };
-
             try {
                 const characteristics = await service.getCharacteristics();
                 for (const char of characteristics) {
@@ -204,7 +190,6 @@ export async function connectToDevice(deviceId) {
         }
         
         renderGattTree(gattTree, device.name);
-
     } catch (err) {
         diagLog(`GATT-Verbindungsfehler: ${err.message}`, 'error');
         onGattDisconnect();
@@ -216,7 +201,6 @@ export async function readCharacteristic(charUuid) {
     if (!char || !char.properties.read) {
         return diagLog(`Lesefehler: Char ${charUuid} nicht gefunden oder nicht lesbar.`, 'error');
     }
-    
     try {
         diagLog(`Lese Wert von ${charUuid}...`, 'bt');
         const value = await char.readValue();
@@ -231,13 +215,12 @@ export async function startNotifications(charUuid) {
     if (!char || !char.properties.notify) {
         return diagLog(`Notify-Fehler: Char ${charUuid} nicht gefunden oder nicht abonnierbar.`, 'error');
     }
-    
     try {
         diagLog(`Starte Notifications für ${charUuid}...`, 'bt');
         await char.startNotifications();
         char.addEventListener('characteristicvaluechanged', handleValueChange);
         diagLog(`Notifications für ${charUuid} gestartet.`, 'bt');
-        updateCharacteristicValue(charUuid, null, true); // true = "Notify aktiv"
+        updateCharacteristicValue(charUuid, null, true);
     } catch (err) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
