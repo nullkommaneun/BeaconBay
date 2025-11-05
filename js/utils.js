@@ -241,3 +241,38 @@ export function calculateDistance(txPower, rssi) {
         return 'N/A (Berechnungsfehler)';
     }
 }
+/**
+ * Wandelt ein DataView-Objekt in einen Hexadezimal-String um.
+ * @param {DataView} dataView - Die vom Gerät gelesenen Rohdaten.
+ * @returns {string} Ein formatierter Hex-String (z.B. "0xDE 0xAD 0xBE 0xEF").
+ */
+export function dataViewToHex(dataView) {
+    if (!dataView) {
+        return "N/A";
+    }
+    const hexBytes = [];
+    for (let i = 0; i < dataView.byteLength; i++) {
+        const byte = dataView.getUint8(i).toString(16).toUpperCase();
+        hexBytes.push(byte.length === 1 ? '0' + byte : byte);
+    }
+    return `0x${hexBytes.join(' ')}`;
+}
+
+/**
+ * Wandelt ein DataView-Objekt in einen lesbaren Text (UTF-8) um.
+ * Fängt Fehler ab, falls es keine gültigen Textdaten sind.
+ * @param {DataView} dataView 
+ * @returns {string} Der decodierte String oder ein Hex-Fallback.
+ */
+export function dataViewToText(dataView) {
+    if (!dataView) {
+        return "N/A";
+    }
+    try {
+        // TextDecoder ist die moderne Art, ArrayBuffer in Strings umzuwandeln
+        return new TextDecoder('utf-8').decode(dataView);
+    } catch (e) {
+        // Fallback auf Hex, wenn es kein gültiger UTF-8-Text ist
+        return dataViewToHex(dataView);
+    }
+}
