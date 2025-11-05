@@ -1,9 +1,9 @@
 /**
- * js/ui.js (Version 9.1 - Inspektor-Modell & Industrial-Highlight)
+ * js/ui.js (Version 9.2 - Inspektor-Stabilitätspatch)
  * * ARCHITEKTUR-HINWEIS: Layer 2 Modul.
- * - Behebt den "Cannot read properties of null" Crash durch Verwendung der korrekten IDs (inspector-view, beacon-view).
- * - Implementiert das "Inspektor-Modell" (Klick -> Inspizieren, nicht Verbinden).
- * - Enthält die 'INDUSTRIAL_COMPANIES'-Liste, um relevante Geräte hervorzuheben.
+ * - Behebt den "feststeckenden" Inspektor-Bug (Bug 2 & 3).
+ * - Die Listener für die Inspektor-Buttons werden jetzt einmalig in setupUIListeners gesetzt.
+ * - showInspectorView ist jetzt "stateless" und setzt den Zustand (ID, Button-Status) bei jedem Aufruf neu.
  */
 
 import { diagLog } from './errorManager.js';
@@ -24,11 +24,11 @@ const staleToggle = document.getElementById('staleToggle');
 const beaconDisplay = document.getElementById('beaconDisplay');
 const downloadButton = document.getElementById('downloadButton');
 
-// NEU: Geteilte Ansichten, behebt den Crash
+// Geteilte Ansichten
 const beaconView = document.getElementById('beacon-view');
-const inspectorView = document.getElementById('inspector-view'); // (war gatt-view)
+const inspectorView = document.getElementById('inspector-view');
 
-// Inspektor-Ansicht Elemente
+// Inspektor-Ansicht Elemente (Namen aus deinem V9.1-Code übernommen)
 const inspectorDeviceName = document.getElementById('inspectorDeviceName');
 const inspectorRssiCanvas = document.getElementById('inspectorRssiChart');
 const inspectorAdList = document.getElementById('inspector-ad-list');
@@ -40,12 +40,15 @@ const gattTreeContainer = document.getElementById('gatt-tree-container');
 
 let isStaleModeActive = false;
 const cardChartMap = new Map(); // Für die kleinen Sparklines
-let inspectorRssiChart = null; // Für den großen Chart im Inspektor
 let appCallbacks = {};
+
+// V9.2 PATCH: Zustandsspeicherung für den Inspektor
+let inspectorRssiChart = null; // Hält die Chart.js-Instanz
+let currentlyInspectedId = null; // Hält die ID für den "Verbinden"-Button
+
 
 /**
  * NEU: Liste der Firmen, die wir als "Industrie-relevant" einstufen.
- * (Stellen Sie sicher, dass diese mit Ihrer 'company_ids.json' übereinstimmen)
  */
 const INDUSTRIAL_COMPANIES = [
     'Nordic Semiconductor ASA',
@@ -155,8 +158,7 @@ function handleStaleToggle() {
 // === PUBLIC API: VIEW-MANAGEMENT ===
 
 /**
- * KORRIGIERT: Schaltet zwischen 'beacon' und 'inspector' Ansicht um.
- * Behebt den "Cannot read properties of null (reading 'style')" Fehler.
+ * Schaltet zwischen 'beacon' und 'inspector' Ansicht um.
  */
 export function showView(viewName) {
     if (viewName === 'inspector') {
@@ -172,35 +174,30 @@ export function showView(viewName) {
 }
 
 /**
- * NEU: Wird von bluetooth.js aufgerufen, um die UI in den Ladezustand zu versetzen.
- * @param {boolean} isConnecting - Ob die Verbindung gerade läuft.
- * @param {string | null} [error=null] - Eine Fehlermeldung, falls aufgetreten.
- * @param {boolean} [isConnected=false] - Ob die Verbindung erfolgreich war.
+ * Wird von bluetooth.js aufgerufen, um die UI in den Ladezustand zu versetzen.
+ * V9.2 HINWEIS: Verwendet die globalen Button-Referenzen.
  */
 export function setGattConnectingUI(isConnecting, error = null, isConnected = false) {
-    const connectBtn = document.getElementById('gattConnectButton');
-    const disconnectBtn = document.getElementById('gattDisconnectButton');
-
     if (isConnecting) {
-        if (connectBtn) {
-            connectBtn.disabled = true;
-            connectBtn.textContent = 'Verbinde...';
-        }
-        if (disconnectBtn) disconnectBtn.disabled = true;
+        gattConnectButton.disabled = true;
+        gattConnectButton.textContent = 'Verbinde...';
+        gattDisconnectButton.disabled = true;
         if (gattTreeContainer) gattTreeContainer.innerHTML = '<p>Verbinde und lese Services...</p>';
     } else if (isConnected) {
-        if (connectBtn) {
-            connectBtn.disabled = true;
-            connectBtn.textContent = 'Verbunden';
-        }
-        if (disconnectBtn) disconnectBtn.disabled = false;
+        gattConnectButton.disabled = true;
+        gattConnectButton.textContent = 'Verbunden';
+        gattDisconnectButton.disabled = false;
     } else {
         // Fehler oder normale Trennung
-        if (connectBtn) {
-            connectBtn.disabled = false;
-            connectBtn.textContent = 'Verbinden';
-        }
-        if (disconnectBtn) disconnectBtn.disabled = true;
+        // WICHTIG: Der 'disabled'-Status von gattConnectButton wird durch
+        // das 'isConnectable' des *aktuellen* Geräts gesteuert.
+        // Wir setzen ihn hier nur zurück, wenn wir wissen, dass das Gerät verbindbar ist.
+        const deviceLog = appCallbacks.onGetDeviceLog(currentlyInspectedId);
+        
+        gattConnectButton.disabled = deviceLog ? !deviceLog.isConnectable : true;
+        gattConnectButton.textContent = 'Verbinden';
+        gattDisconnectButton.disabled = true;
+
         if (gattTreeContainer) {
             if (error) {
                 gattTreeContainer.innerHTML = `<p style="color:var(--error-color);">Verbindung fehlgeschlagen: ${error}</p>`;
@@ -213,41 +210,53 @@ export function setGattConnectingUI(isConnecting, error = null, isConnected = fa
 
 
 /**
- * NEU: Füllt und zeigt die Inspektor-Ansicht, wenn auf eine Karte geklickt wird.
+ * V9.2 PATCH: Füllt und zeigt die Inspektor-Ansicht.
+ * Diese Funktion ist jetzt "stateless" und robust gegen Mehrfachaufrufe.
+ * Sie klont keine Buttons mehr.
  * @param {object} deviceLog - Das vollständige Log-Objekt von logger.js.
  */
 export function showInspectorView(deviceLog) {
-    showView('inspector');
     
-    inspectorDeviceName.textContent = deviceLog.name || '[Unbenannt]';
-    
-    // Klonen der Buttons, um alte Event-Listener sicher zu entfernen
-    const newConnectBtn = gattConnectButton.cloneNode(true);
-    gattConnectButton.parentNode.replaceChild(newConnectBtn, gattConnectButton);
-    newConnectBtn.id = 'gattConnectButton'; // ID wiederherstellen
+    // ----- 1. ZUSTAND SETZEN (KRITISCH) -----
+    currentlyInspectedId = deviceLog.id;
 
-    const newDisconnectBtn = gattDisconnectButton.cloneNode(true);
-    gattDisconnectButton.parentNode.replaceChild(newDisconnectBtn, gattDisconnectButton);
-    newDisconnectBtn.id = 'gattDisconnectButton';
+    // ----- 2. ALTE DATEN BEREINIGEN (KRITISCH) -----
     
-    if (deviceLog.isConnectable) {
-        newConnectBtn.disabled = false;
-        newConnectBtn.textContent = 'Verbinden';
-        newConnectBtn.addEventListener('click', () => {
-            appCallbacks.onGattConnect(deviceLog.id);
-        });
-    } else {
-        newConnectBtn.disabled = true;
-        newConnectBtn.textContent = 'GATT nicht verfügbar';
-    }
-    
-    newDisconnectBtn.disabled = true;
-    newDisconnectBtn.addEventListener('click', () => appCallbacks.onGattDisconnect());
-    
-    // RSSI-Verlauf-Chart rendern
+    // Zerstöre den alten Chart, falls er existiert
     if (inspectorRssiChart) {
         inspectorRssiChart.destroy();
+        inspectorRssiChart = null;
     }
+    
+    // Leere die Advertisement-Liste
+    inspectorAdList.innerHTML = '';
+    
+    // Setze GATT-Bereiche visuell zurück
+    gattSummaryBox.style.display = 'none';
+    gattTreeContainer.innerHTML = '<p>Noch nicht verbunden. Klicken Sie auf "Verbinden", um den GATT-Baum zu laden.</p>';
+    gattTreeContainer.style.display = 'block';
+
+
+    // ----- 3. NEUE DATEN FÜLLEN -----
+
+    // Setze Titel
+    inspectorDeviceName.textContent = deviceLog.name || '[Unbenannt]';
+    
+    // Setze Button-Status (KRITISCH!)
+    // Der Listener ist bereits in setupUIListeners global gesetzt.
+    if (deviceLog.isConnectable) {
+        gattConnectButton.disabled = false;
+        gattConnectButton.textContent = 'Verbinden';
+    } else {
+        gattConnectButton.disabled = true;
+        gattConnectButton.textContent = 'GATT nicht verfügbar';
+    }
+    // Der Disconnect-Button ist standardmäßig deaktiviert, bis eine Verbindung besteht
+    gattDisconnectButton.disabled = true;
+    
+    // ----- 4. NEUEN CHART ZEICHNEN -----
+    
+    // RSSI-Verlauf-Chart rendern
     const ctx = inspectorRssiCanvas.getContext('2d');
     inspectorRssiChart = new Chart(ctx, {
         type: 'line',
@@ -273,8 +282,8 @@ export function showInspectorView(deviceLog) {
         }
     });
 
-    // Advertisement-Liste rendern
-    inspectorAdList.innerHTML = '';
+    // ----- 5. ADVERTISEMENT-LISTE FÜLLEN -----
+    
     if (deviceLog.uniqueAdvertisements.length === 0) {
         inspectorAdList.innerHTML = '<div class="ad-entry">Keine Advertisement-Daten geloggt.</div>';
     } else {
@@ -291,30 +300,22 @@ export function showInspectorView(deviceLog) {
         });
     }
 
-    // GATT-Bereiche zurücksetzen
-    gattSummaryBox.style.display = 'none';
-    gattTreeContainer.innerHTML = '<p>Noch nicht verbunden. Klicken Sie auf "Verbinden", um den GATT-Baum zu laden.</p>';
-    gattTreeContainer.style.display = 'block';
+    // ----- 6. ANSICHT WECHSELN -----
+    showView('inspector');
 }
 
 
 /**
  * Füllt den GATT-Baum *innerhalb* der Inspektor-Ansicht.
+ * V9.2 HINWEIS: Verwendet die globalen Button-Referenzen.
  */
 export function renderGattTree(gattTree, deviceName, summary) {
     gattTreeContainer.innerHTML = ''; // Nur den Baum-Container leeren
     
     // Update: Buttons nach erfolgreicher Verbindung setzen
-    const connectBtn = document.getElementById('gattConnectButton');
-    const disconnectBtn = document.getElementById('gattDisconnectButton');
-    
-    if(connectBtn) {
-        connectBtn.disabled = true;
-        connectBtn.textContent = 'Verbunden';
-    }
-    if(disconnectBtn) {
-        disconnectBtn.disabled = false;
-    }
+    gattConnectButton.disabled = true;
+    gattConnectButton.textContent = 'Verbunden';
+    gattDisconnectButton.disabled = false;
     
     // === 1. ZUSAMMENFASSUNG FÜLLEN ===
     if (summary && Object.keys(summary).length > 0) {
@@ -412,17 +413,41 @@ export function updateCharacteristicValue(charUuid, value, isNotifying = false, 
 
 // === PUBLIC API: SETUP & BEACON UPDATE ===
 
+/**
+ * V9.2 PATCH: Bindet ALLE Listener einmalig, einschließlich der Inspektor-Buttons.
+ */
 export function setupUIListeners(callbacks) {
     appCallbacks = callbacks;
+    
+    // Globale Aktionen
     scanButton.addEventListener('click', callbacks.onScan);
     disconnectButton.addEventListener('click', callbacks.onStopScan);
-    // HINWEIS: gattConnect/Disconnect werden jetzt in showInspectorView gebunden
     downloadButton.addEventListener('click', callbacks.onDownload);
+    
+    // Ansicht-Steuerung
     viewToggle.addEventListener('click', callbacks.onViewToggle); 
     sortButton.addEventListener('click', sortBeaconCards);
     staleToggle.addEventListener('change', handleStaleToggle);
     
-    diagLog('UI-Event-Listener erfolgreich gebunden.', 'info');
+    // V9.2 PATCH: Permanente Listener für Inspektor-Buttons
+    // Die Logik prüft die 'currentlyInspectedId' zum Zeitpunkt des Klicks.
+    gattConnectButton.addEventListener('click', () => {
+        if (currentlyInspectedId && appCallbacks.onGattConnect) {
+            diagLog(`[TRACE] gattConnectButton Klick erfasst. ID: ${currentlyInspectedId.substring(0,4)}...`, 'info');
+            appCallbacks.onGattConnect(currentlyInspectedId);
+        } else {
+            diagLog(`[TRACE] gattConnectButton Klick FEHLER: currentlyInspectedId ist null oder Callback fehlt.`, 'error');
+        }
+    });
+    
+    gattDisconnectButton.addEventListener('click', () => {
+        if (appCallbacks.onGattDisconnect) {
+            diagLog(`[TRACE] gattDisconnectButton Klick erfasst.`, 'info');
+            appCallbacks.onGattDisconnect();
+        }
+    });
+    
+    diagLog('UI-Event-Listener (V9.2) erfolgreich gebunden.', 'info');
 }
 
 export function setScanStatus(isScanning) {
@@ -446,15 +471,13 @@ export function updateBeaconUI(deviceId, device) {
         card.id = deviceId;
         card.className = 'beacon-card';
         
-        // [TRACE 2]
         diagLog(`[TRACE] updateBeaconUI: Prüfe 'isConnectable' (isInteresting) für ${device.id.substring(0, 4)}... Wert: ${device.isConnectable}`, 'utils');
         
-        // NEU: JEDE Karte ist klickbar
+        // JEDE Karte ist klickbar
         diagLog(`[TRACE] updateBeaconUI: Hänge click listener an ${device.id.substring(0, 4)}... an.`, 'info');
         card.addEventListener('click', () => {
-            // [TRACE 4]
             diagLog(`[TRACE] Klick auf Karte ${deviceId.substring(0, 4)}... in ui.js erkannt.`, 'info');
-            if (appCallbacks.onInspect) { // NEU: Ruft 'onInspect' auf
+            if (appCallbacks.onInspect) { // Ruft 'onInspect' auf
                 diagLog(`[TRACE] Rufe appCallbacks.onInspect für ${deviceId.substring(0, 4)}... auf.`, 'info');
                 appCallbacks.onInspect(deviceId);
             } else {
@@ -517,4 +540,3 @@ export function clearUI() {
     cardChartMap.forEach(chart => chart.destroy());
     cardChartMap.clear();
 }
- 
