@@ -1,10 +1,9 @@
 /**
- * js/app.js (Version 7 - Inspektor-Modell)
+ * js/app.js (Version 9.3 - Architektur-Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - Klick auf Karte löst 'onInspect' aus (Scan läuft weiter).
- * - 'showInspectorView' holt Daten vom Logger und zeigt sie an.
- * - Klick auf "Verbinden" (in Inspektor) löst 'onGattConnect' aus.
- * - ERST HIER wird der Scan gestoppt und die GATT-Verbindung initiiert.
+ * - Behebt den "gattServer is not defined" ReferenceError.
+ * - viewToggleAction ruft jetzt sauber die disconnect()-Funktion des Treibers auf.
+ * - Fügt onGetDeviceLog-Callback für ui.js (V9.2) hinzu.
  */
 
 // Heartbeat
@@ -60,7 +59,6 @@ async function initApp() {
         diagLog('Lade Layer 2 (ui.js)...', 'utils');
         const uiModule = await import('./ui.js');
         setupUIListeners = uiModule.setupUIListeners;
-        // NEU: Wir importieren die UI-Steuerfunktionen
         showInspectorView = uiModule.showInspectorView;
         showView = uiModule.showView;
         
@@ -98,34 +96,20 @@ async function initApp() {
             stopKeepAlive();
         };
         
-        /**
-         * NEU: Wird von ui.js aufgerufen, wenn auf eine Karte geklickt wird.
-         * Stoppt den Scan NICHT.
-         * @param {string} deviceId 
-         */
         const inspectAction = (deviceId) => {
             diagLog(`Aktion: Inspiziere ${deviceId.substring(0, 4)}... (Scan läuft)`, 'ui');
-            // 1. Hole geloggte Daten vom Logger
             const deviceLog = getDeviceLog(deviceId);
             if (deviceLog) {
-                // 2. Sage der UI, die Daten in der Inspektor-Ansicht anzuzeigen
                 showInspectorView(deviceLog);
             } else {
                 diagLog(`FEHLER: Konnte Log-Daten für ${deviceId} nicht finden.`, 'error');
             }
         };
         
-        /**
-         * NEU: Wird von ui.js aufgerufen, wenn der "Verbinden"-Button
-         * im Inspektor geklickt wird.
-         * @param {string} deviceId
-         */
         const gattConnectAction = (deviceId) => {
             diagLog(`Aktion: Verbinde GATT für ${deviceId.substring(0, 4)}...`, 'bt');
-            // 1. JETZT den Scan stoppen
             stopScan();
             stopKeepAlive();
-            // 2. Bluetooth-Modul anweisen, zu verbinden
             connectToDevice(deviceId);
         };
         
@@ -149,26 +133,38 @@ async function initApp() {
             generateLogFile();
         };
 
+        /**
+         * V9.3 PATCH: Behebt den ReferenceError.
+         * Ruft jetzt sauber die 'disconnect'-Funktion des Treibers auf,
+         * anstatt selbst 'gattServer' zu prüfen.
+         */
         const viewToggleAction = () => {
-            // Dieser Button kehrt jetzt immer zur Beacon-Ansicht zurück
             diagLog("Aktion: Wechsle zur Beacon-Ansicht", "ui");
             showView('beacon');
-            if (gattServer) {
-                disconnect();
-            }
+            
+            // KORREKT: Sage dem Treiber (bluetooth.js), er soll die Verbindung trennen.
+            // Der Treiber kümmert sich selbst darum, ob eine Verbindung besteht.
+            disconnect();
         };
 
         // --- UI-Listener mit Callbacks verbinden ---
         setupUIListeners({
             onScan: scanAction,
             onStopScan: stopScanAction,
-            onInspect: inspectAction,           // NEU (Klick auf Karte)
-            onGattConnect: gattConnectAction,   // NEU (Klick auf "Verbinden")
+            onInspect: inspectAction,
+            onGattConnect: gattConnectAction,
             onGattDisconnect: gattDisconnectAction,
-            onViewToggle: viewToggleAction,   // NEU (Klick auf "Beacon-Ansicht")
+            onViewToggle: viewToggleAction,
             onRead: readAction,
             onNotify: notifyAction,
             onDownload: downloadAction,
+            
+            /**
+             * V9.3 PATCH: Hinzugefügt, da ui.js (V9.2) diesen Callback 
+             * benötigt, um den Button-Status korrekt zurückzusetzen.
+             */
+            onGetDeviceLog: getDeviceLog,
+            
             onSort: () => {}, 
             onStaleToggle: () => {} 
         });
@@ -184,3 +180,4 @@ async function initApp() {
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
+ 
