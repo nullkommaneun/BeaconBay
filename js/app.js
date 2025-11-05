@@ -1,16 +1,16 @@
 /**
- * js/app.js (Version 9.15 - "Smart Filter" Dependency-Fix)
+ * js/app.js (Version 10 - GATT-Write Implementiert)
  * * ARCHITEKTUR-HINWEIS:
- * - Behebt den V9.14-Bug ("springt zurück zum Scan").
- * - initBluetooth übergibt jetzt 'onGetDeviceLog' an bluetooth.js,
- * damit der "Smart Filter" auf die Logger-Daten zugreifen kann.
+ * - Basiert auf der stabilen V9.15 (Smart Filter & Auto-Restart).
+ * - V10: Importiert 'writeCharacteristic' (von bluetooth.js) und 'hexStringToArrayBuffer' (von utils.js).
+ * - V10: Fügt 'writeAction' als neuen Callback hinzu (verwendet 'prompt()' für die Eingabe).
+ * - V10: Übergibt 'onWrite' an setupUIListeners.
  */
 
 // Heartbeat
 window.__app_heartbeat = false;
 
 function earlyDiagLog(msg, isError = false) {
-    // ... (unverändert)
     try {
         const panel = document.getElementById('diag-log-panel');
         if (panel) {
@@ -26,10 +26,10 @@ async function initApp() {
     // Variablen für Modul-Funktionen
     let diagLog, initGlobalErrorHandler;
     let startKeepAlive, stopKeepAlive;
-    let loadCompanyIDs;
+    let loadCompanyIDs, hexStringToArrayBuffer; // V10: Hinzugefügt
     let setupUIListeners, showInspectorView, showView, setGattConnectingUI; 
     let initBluetooth, startScan, stopScan, disconnect,
-        readCharacteristic, startNotifications; 
+        readCharacteristic, startNotifications, writeCharacteristic; // V10: Hinzugefügt
     let requestDeviceForHandshake, connectWithAuthorizedDevice;
     let getDeviceLog, generateLogFile; 
 
@@ -52,6 +52,7 @@ async function initApp() {
         diagLog('Lade Layer 1 (utils.js)...', 'utils');
         const utilsModule = await import('./utils.js');
         loadCompanyIDs = utilsModule.loadCompanyIDs;
+        hexStringToArrayBuffer = utilsModule.hexStringToArrayBuffer; // V10: Hinzugefügt
         
         diagLog('Lade Layer 1 (logger.js)...', 'utils');
         const loggerModule = await import('./logger.js');
@@ -75,6 +76,7 @@ async function initApp() {
         disconnect = bluetoothModule.disconnect;
         readCharacteristic = bluetoothModule.readCharacteristic;
         startNotifications = bluetoothModule.startNotifications;
+        writeCharacteristic = bluetoothModule.writeCharacteristic; // V10: Hinzugefügt
 
         diagLog('Alle Module erfolgreich geladen.', 'info');
 
@@ -146,6 +148,31 @@ async function initApp() {
             diagLog(`Aktion: Abonniere ${charUuid}`, 'bt');
             startNotifications(charUuid);
         };
+
+        /**
+         * V10 NEU: Wird von ui.js aufgerufen, wenn auf "Schreiben" geklickt wird.
+         */
+        const writeAction = (charUuid) => {
+            diagLog(`Aktion: Anforderung 'Schreiben' für ${charUuid}`, 'bt');
+            
+            // V10 TEST: Einfaches Pop-up
+            const dataHex = prompt("Hex-Wert eingeben (z.B. '0x01' oder 'FF01AA')");
+            
+            if (dataHex === null || dataHex.trim() === "") {
+                diagLog("Schreiben abgebrochen.", 'ui');
+                return;
+            }
+
+            try {
+                // Konvertiere den String in einen Buffer
+                const dataBuffer = hexStringToArrayBuffer(dataHex); 
+                // Sende an den Treiber
+                writeCharacteristic(charUuid, dataBuffer);
+            } catch (e) {
+                diagLog(`Ungültiges Hex-Format: ${e.message}`, 'error');
+                alert(`Ungültiges Format: ${e.message}. (z.B. '01' oder 'FF0A')`);
+            }
+        };
         
         const downloadAction = () => {
             diagLog("Aktion: Download Log (via app.js)", "utils");
@@ -161,8 +188,8 @@ async function initApp() {
         // --- Initialisierung ---
         diagLog('Initialisiere Bluetooth-Modul (und Logger)...', 'bt');
         /**
-         * V9.15 PATCH: Übergibt jetzt 'onGetDeviceLog' an bluetooth.js,
-         * damit der "Smart Filter" (V9.14) funktioniert.
+         * V9.15 PATCH: Übergibt 'onGetDeviceLog' an bluetooth.js
+         * für den Smart Filter.
          */
         initBluetooth({
             onGattDisconnected: gattUnexpectedDisconnectAction,
@@ -183,8 +210,9 @@ async function initApp() {
             onViewToggle: viewToggleAction,
             onRead: readAction,
             onNotify: notifyAction,
+            onWrite: writeAction, // V10 HINZUGEFÜGT
             onDownload: downloadAction,
-            onGetDeviceLog: getDeviceLog, // (Bleibt hier für ui.js V9.2)
+            onGetDeviceLog: getDeviceLog, // (Für V9.2/V9.15 UI-Patch)
             onSort: () => {}, 
             onStaleToggle: () => {} 
         });
