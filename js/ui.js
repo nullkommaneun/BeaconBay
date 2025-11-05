@@ -1,5 +1,5 @@
 /**
- * js/ui.js (Version 7.4 - Sauber, keine Duplikate)
+ * js/ui.js (Version 7.4 - Vollständig, keine Duplikate, kein 'end of input' Fehler)
  * * ARCHITEKTUR-HINWEIS: Layer 2 Modul.
  * - Enthält Trace-Logs für das Debugging von 'isConnectable'.
  * - Enthält den 'rssi'-Tippfehler-Fix.
@@ -371,3 +371,40 @@ export function updateBeaconUI(deviceId, device) {
     }
 
     // === Karte AKTUALISIEREN (immer) ===
+    card.querySelector('.rssi-value').textContent = `${device.rssi} dBm`;
+    card.dataset.rssi = device.rssi;
+    
+    // Tippfehler (rssDsi) ist hier behoben
+    card.querySelector('.distance-value').textContent = calculateDistance(device.txPower, device.rssi); 
+    
+    const telemetryEl = card.querySelector('.beacon-telemetry');
+    if (telemetryEl) telemetryEl.innerHTML = renderTelemetry(device.telemetry).trim();
+
+    const beaconDataEl = card.querySelector('.beacon-data');
+    if (beaconDataEl) beaconDataEl.innerHTML = renderBeaconData(device.beaconData).trim();
+
+    const chart = chartMap.get(deviceId);
+    if (chart) updateSparkline(chart, device.rssi);
+    
+    card.classList.remove('stale');
+}
+
+/**
+ * Markiert eine Beacon-Karte visuell als "stale" (veraltet).
+ * @param {string} deviceId - Die ID der Karte.
+ */
+export function setCardStale(deviceId) {
+    const card = document.getElementById(deviceId);
+    if (card) card.classList.add('stale');
+}
+
+/**
+ * Bereinigt die UI (Beacon-Karten und Charts), wenn der Scan stoppt.
+ */
+export function clearUI() {
+    diagLog('Bereinige UI und lösche Beacon-Karten...', 'ui');
+    beaconDisplay.innerHTML = '';
+    chartMap.forEach(chart => chart.destroy());
+    chartMap.clear();
+}
+ 
