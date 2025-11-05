@@ -1,16 +1,12 @@
 /**
- * js/bluetooth.js (Version 7 - Smart Driver mit DIS-Parsing)
+ * js/bluetooth.js (Version 6.4 - Neue 'isInteresting'-Logik)
  * * ARCHITEKTUR-HINWEIS:
- * - Importiert 'KNOWN_SERVICES', 'decodeKnownCharacteristic' aus utils.js.
- * - 'connectToDevice' wurde "aufgebohrt":
- * 1. Erstellt ein 'summary'-Objekt.
- * 2. Erkennt automatisch den "Device Information Service" (0x180A).
- * 3. Liest automatisch alle bekannten Characteristics darin aus.
- * 4. Übergibt das 'summary'-Objekt an 'renderGattTree'.
+ * - Ignoriert das unzuverlässige 'connectable'-Flag.
+ * - Fügt stattdessen ein 'isInteresting'-Flag hinzu, wenn das Gerät
+ * manufacturerData oder serviceData sendet.
  */
 
 import { diagLog } from './errorManager.js';
-// NEU: Importiere die Wissensdatenbank
 import { 
     parseAdvertisementData, 
     KNOWN_SERVICES, 
@@ -44,20 +40,25 @@ const STALE_CHECK_INTERVAL_MS = 2000;
 
 function handleAdvertisement(event) {
     try {
+        // Logger füttern (Logger V3.2 greift intern korrekt zu)
         logAdvertisement(event);
         
         const { device, manufacturerData, serviceData } = event;
-        // NEUE 'isInteresting'-Logik
+
+        // ==== NEUE LOGIK (ersetzt 'connectable') ====
+        // Ein Gerät ist "interessant" (potenziell verbindungsfähig),
+        // wenn es mehr als nur seinen Namen sendet.
         const isInteresting = (manufacturerData && manufacturerData.size > 0) || 
                               (serviceData && serviceData.size > 0);
         
-        // [TRACE 1]
+        // ==== [TRACE 1] ====
         diagLog(`[TRACE] handleAdvertisement: Gerät ${device.id.substring(0, 4)}... hat isInteresting=${isInteresting}`, 'utils');
 
         const parsedData = parseAdvertisementData(event);
         if (!parsedData) return; 
         
-        parsedData.isConnectable = isInteresting;
+        // Wir hängen unser neues Flag an das Objekt für die UI an
+        parsedData.isConnectable = isInteresting; // (Wir behalten den Variablennamen)
         
         deviceMap.set(device.id, {
             deviceObject: device, 
@@ -91,10 +92,9 @@ function onGattDisconnect() {
 function handleValueChange(event) {
     const charUuid = event.target.uuid;
     const value = event.target.value; 
-    // Wir rufen den intelligenten Dekodierer auf
     const decodedValue = decodeKnownCharacteristic(charUuid, value);
     diagLog(`[Notify] Neuer Wert für ${charUuid}: ${decodedValue}`, 'bt');
-    updateCharacteristicValue(charUuid, value, false, decodedValue); // Wert an UI pushen
+    updateCharacteristicValue(charUuid, value, false, decodedValue);
 }
 
 // === PUBLIC API: SCAN & BASE CONNECT ===
@@ -155,17 +155,15 @@ export function disconnect() {
 
 // === PUBLIC API: GATT INTERACTION ===
 
-/**
- * NEU: "Aufgebohrte" Verbindungsfunktion.
- * Liest jetzt automatisch bekannte Services aus.
- */
 export async function connectToDevice(deviceId) {
     diagLog(`[TRACE] connectToDevice(${deviceId.substring(0, 4)}...) in bluetooth.js gestartet.`, 'bt');
     const deviceData = deviceMap.get(deviceId);
     if (!deviceData) return diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
     
+    // (Diese Prüfung verwendet jetzt unser 'isInteresting'-Flag)
     if (!deviceData.parsedData.isConnectable) {
-        return diagLog(`Aktion blockiert: Gerät ${deviceId} ist nicht verbindungsfähig.`, 'warn');
+        diagLog(`[TRACE] connectToDevice: Klick auf ${deviceId.substring(0, 4)}... ignoriert (nicht 'interesting').`, 'warn');
+        return;
     }
 
     if (activeScan && activeScan.active) stopScan();
@@ -183,16 +181,15 @@ export async function connectToDevice(deviceId) {
         diagLog(`Services gefunden: ${services.length}`, 'bt');
         
         const gattTree = [];
-        const gattSummary = {}; // NEU: Das Objekt für die Zusammenfassung
+        const gattSummary = {}; 
 
-        // Über alle Services iterieren
         for (const service of services) {
             const serviceUuid = service.uuid.toLowerCase();
             const serviceName = KNOWN_SERVICES.get(serviceUuid) || 'Unknown Service';
             
             const serviceData = {
                 uuid: serviceUuid,
-                name: serviceName, // NEU: Name speichern
+                name: serviceName,
                 characteristics: []
             };
 
@@ -203,29 +200,24 @@ export async function connectToDevice(deviceId) {
                 diagLog(`Fehler beim Lesen der Characteristics für ${serviceName}: ${err.message}`, 'warn');
             }
 
-            // Über alle Characteristics iterieren
             for (const char of characteristics) {
                 const charUuid = char.uuid.toLowerCase();
                 const charName = KNOWN_CHARACTERISTICS.get(charUuid) || 'Unknown Characteristic';
                 
-                // 1. Für den Roh-Baum speichern
                 gattCharacteristicMap.set(charUuid, char);
                 serviceData.characteristics.push({
                     uuid: charUuid,
-                    name: charName, // NEU: Name speichern
+                    name: charName,
                     properties: char.properties
                 });
 
-                // 2. NEU: Automatische Ausleselogik
-                // Wenn es ein bekannter, lesbarer Wert ist, lies ihn automatisch aus.
+                // Automatische Ausleselogik
                 if (char.properties.read && 
                    (serviceName === 'Device Information' || serviceName === 'Battery Service')) 
                 {
                     try {
                         const value = await char.readValue();
                         const decodedValue = decodeKnownCharacteristic(charUuid, value);
-                        
-                        // Füge es der Zusammenfassung hinzu
                         gattSummary[charName] = decodedValue;
                         diagLog(`[SmartDriver] ${charName}: ${decodedValue}`, 'bt');
                     } catch (readErr) {
@@ -236,7 +228,6 @@ export async function connectToDevice(deviceId) {
             gattTree.push(serviceData);
         }
         
-        // NEU: Übergebe den Roh-Baum UND die Zusammenfassung an die UI
         renderGattTree(gattTree, device.name, gattSummary);
 
     } catch (err) {
@@ -253,7 +244,6 @@ export async function readCharacteristic(charUuid) {
     try {
         diagLog(`Lese Wert von ${charUuid}...`, 'bt');
         const value = await char.readValue();
-        // NEU: Dekodierten Wert an die UI übergeben
         const decodedValue = decodeKnownCharacteristic(charUuid, value);
         updateCharacteristicValue(charUuid, value, false, decodedValue);
     } catch (err) {
@@ -271,8 +261,9 @@ export async function startNotifications(charUuid) {
         await char.startNotifications();
         char.addEventListener('characteristicvaluechanged', handleValueChange);
         diagLog(`Notifications für ${charUuid} gestartet.`, 'bt');
-        updateCharacteristicValue(charUuid, null, true); // true = "Notify aktiv"
+        updateCharacteristicValue(charUuid, null, true);
     } catch (err) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
 }
+ 
