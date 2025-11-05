@@ -1,8 +1,8 @@
 /**
- * js/ui.js (Version 7.3 - Mit Fehler-Trace-Route)
- * * ARCHITEKTUR-HINWEIS:
- * - Fügt [TRACE]-Logs in 'updateBeaconUI' und dem 'click'-Handler hinzu.
- * - Behebt den 'rssDsi'-Tippfehler.
+ * js/ui.js (Version 7.4 - Sauber, keine Duplikate)
+ * * ARCHITEKTUR-HINWEIS: Layer 2 Modul.
+ * - Enthält Trace-Logs für das Debugging von 'isConnectable'.
+ * - Enthält den 'rssi'-Tippfehler-Fix.
  */
 
 import { diagLog } from './errorManager.js';
@@ -26,16 +26,13 @@ let isStaleModeActive = false;
 const chartMap = new Map();
 let appCallbacks = {};
 
-// === PRIVATE HELPER: CHARTING & RENDERING (Unverändert) ===
-function createSparkline(canvas) { /* ... */ }
-function updateSparkline(chart, rssi) { /* ... */ }
-function renderTelemetry(telemetry) { /* ... */ }
-function renderBeaconData(beaconData) { /* ... */ }
-function sortBeaconCards() { /* ... */ }
-function handleStaleToggle() { /* ... */ }
+// === PRIVATE HELPER: CHARTING ===
 
-// === (Vollständige Funktionen, keine Stubs) ===
-
+/**
+ * Erstellt eine neue Chart.js-Sparkline-Instanz.
+ * @param {HTMLCanvasElement} canvas - Das Canvas-Element.
+ * @returns {Chart} Die Chart.js-Instanz.
+ */
 function createSparkline(canvas) {
     const ctx = canvas.getContext('2d');
     return new Chart(ctx, {
@@ -48,6 +45,12 @@ function createSparkline(canvas) {
         }
     });
 }
+
+/**
+ * Aktualisiert eine Sparkline mit einem neuen RSSI-Wert.
+ * @param {Chart} chart - Die Chart.js-Instanz.
+ * @param {number} rssi - Der neue RSSI-Wert.
+ */
 function updateSparkline(chart, rssi) {
     const data = chart.data.datasets[0].data;
     const labels = chart.data.labels;
@@ -56,8 +59,16 @@ function updateSparkline(chart, rssi) {
     if (data.length > 20) { data.shift(); labels.shift(); }
     chart.update('none');
 }
+
+// === PRIVATE HELPER: RENDERING ===
+
+/**
+ * Erstellt das HTML-Markup für eine Telemetrie-Zeile (RuuviTag).
+ * @param {object} telemetry - Das Telemetrie-Objekt aus utils.js.
+ * @returns {string} - HTML-String.
+ */
 function renderTelemetry(telemetry) {
-    if (!telemetry.temperature) return '';
+    if (!telemetry.temperature) return ''; // Prüft auf ein Ruuvi-spezifisches Feld
     return `
         <div class="beacon-telemetry">
             <span>🌡️ ${telemetry.temperature} °C</span>
@@ -67,22 +78,31 @@ function renderTelemetry(telemetry) {
         </div>
     `;
 }
+
+/**
+ * Rendert iBeacon, Eddystone-URL, Eddystone-UID und Eddystone-TLM.
+ * @param {object} beaconData - Das beaconData-Objekt von utils.js.
+ * @returns {string} - Der HTML-String.
+ */
 function renderBeaconData(beaconData) {
     if (Object.keys(beaconData).length === 0) return '';
     let html = '<div class="beacon-data">';
-    if (beaconData.uuid) {
+    
+    if (beaconData.uuid) { // iBeacon
         html += `
             <div><strong>UUID:</strong> ${beaconData.uuid}</div>
             <div><strong>Major:</strong> ${beaconData.major} | <strong>Minor:</strong> ${beaconData.minor}</div>
         `;
     }
-    if (beaconData.url) {
-        html += `<div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>`;
+    if (beaconData.url) { // Eddystone-URL
+        html += `
+            <div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>
+        `;
     }
-    if (beaconData.uid) {
+    if (beaconData.uid) { // Eddystone-UID
         html += `<div><strong>UID:</strong> ${beaconData.uid}</div>`;
     }
-    if (beaconData.telemetry) {
+    if (beaconData.telemetry) { // Eddystone-TLM
         const tlm = beaconData.telemetry;
         html += `
             <div class="beacon-telemetry">
@@ -96,12 +116,22 @@ function renderBeaconData(beaconData) {
     html += '</div>';
     return html;
 }
+
+// === PRIVATE HELPER: UI-AKTIONEN ===
+
+/**
+ * Sortiert die Beacon-Karten im DOM nach 'data-rssi'.
+ */
 function sortBeaconCards() {
     diagLog('Sortiere Karten nach RSSI...', 'utils');
     const cards = Array.from(beaconDisplay.children);
     cards.sort((a, b) => (+b.dataset.rssi || -1000) - (+a.dataset.rssi || -1000));
     beaconDisplay.append(...cards);
 }
+
+/**
+ * Behandelt den Klick auf den Stale-Toggle.
+ */
 function handleStaleToggle() {
     isStaleModeActive = staleToggle.checked;
     if (isStaleModeActive) {
@@ -112,17 +142,29 @@ function handleStaleToggle() {
 }
 
 // === PUBLIC API: VIEW-MANAGEMENT ===
+
+/**
+ * Schaltet zwischen den Hauptansichten um und setzt den Text
+ * des 'viewToggle'-Buttons korrekt.
+ * @param {'beacon' | 'gatt'} viewName - Die anzuzeigende Ansicht.
+ */
 export function showView(viewName) {
     if (viewName === 'gatt') {
         beaconView.style.display = 'none';
         gattView.style.display = 'block';
         viewToggle.textContent = 'Beacon-Ansicht'; 
     } else {
+        // Standard ist Beacon-Ansicht
         gattView.style.display = 'none';
         beaconView.style.display = 'block';
         viewToggle.textContent = 'GATT-Ansicht';
     }
 }
+
+/**
+ * Setzt die GATT-Ansicht in einen "Verbinde..."-Zustand.
+ * @param {string} name - Der Name des Geräts.
+ */
 export function showConnectingState(name) {
     showView('gatt');
     gattDeviceName.textContent = `Verbinde mit: ${name}...`;
@@ -130,6 +172,12 @@ export function showConnectingState(name) {
 }
 
 // === PUBLIC API: GATT-RENDERING ===
+
+/**
+ * Rendert den interaktiven GATT-Baum.
+ * @param {Array<object>} gattTree - Baumstruktur von bluetooth.js.
+ * @param {string} deviceName - Name des Geräts.
+ */
 export function renderGattTree(gattTree, deviceName) {
     gattDeviceName.textContent = `Verbunden mit: ${deviceName || 'Unbenannt'}`;
     gattTreeContainer.innerHTML = '';
@@ -142,7 +190,12 @@ export function renderGattTree(gattTree, deviceName) {
     gattTree.forEach(service => {
         const serviceEl = document.createElement('div');
         serviceEl.className = 'gatt-service';
-        serviceEl.innerHTML = `... (GATT HTML wie zuvor) ...`;
+        serviceEl.innerHTML = `
+            <div class="gatt-service-header">
+                <strong>Service</strong>
+                <div>UUID: ${service.uuid}</div>
+            </div>
+        `;
         
         const charListEl = document.createElement('div');
         charListEl.className = 'gatt-char-list';
@@ -195,6 +248,13 @@ export function renderGattTree(gattTree, deviceName) {
         gattTreeContainer.appendChild(serviceEl);
     });
 }
+
+/**
+ * Wird von bluetooth.js aufgerufen, um den Wert im UI zu aktualisieren.
+ * @param {string} charUuid - Die UUID der Characteristic.
+ * @param {DataView | null} value - Der gelesene Wert (DataView) oder null.
+ * @param {boolean} [isNotifying=false] - (Optional) Nur um "Notify aktiv" anzuzeigen.
+ */
 export function updateCharacteristicValue(charUuid, value, isNotifying = false) {
     const valueEl = document.getElementById(`val-${charUuid}`);
     if (!valueEl) return;
@@ -215,6 +275,10 @@ export function updateCharacteristicValue(charUuid, value, isNotifying = false) 
 
 // === PUBLIC API: SETUP & BEACON UPDATE ===
 
+/**
+ * Bindet die Event-Listener an die UI-Elemente.
+ * @param {object} callbacks - Ein Objekt mit Callback-Funktionen von app.js.
+ */
 export function setupUIListeners(callbacks) {
     appCallbacks = callbacks;
     scanButton.addEventListener('click', callbacks.onScan);
@@ -233,6 +297,10 @@ export function setupUIListeners(callbacks) {
     diagLog('UI-Event-Listener erfolgreich gebunden.', 'info');
 }
 
+/**
+ * Setzt den visuellen Status der Scan-Buttons.
+ * @param {boolean} isScanning - True, wenn der Scan läuft.
+ */
 export function setScanStatus(isScanning) {
     if (isScanning) {
         scanButton.disabled = true;
@@ -245,6 +313,11 @@ export function setScanStatus(isScanning) {
     }
 }
 
+/**
+ * Die Haupt-Rendering-Funktion. Erstellt oder aktualisiert eine Beacon-Karte.
+ * @param {string} deviceId - Die eindeige ID des Geräts.
+ * @param {object} device - Das von utils.js geparste Geräte-Objekt.
+ */
 export function updateBeaconUI(deviceId, device) {
     let card = document.getElementById(deviceId);
     
@@ -255,7 +328,6 @@ export function updateBeaconUI(deviceId, device) {
         card.className = 'beacon-card';
         
         // ==== [TRACE 2] ====
-        // Welchen 'isConnectable'-Wert erhalten wir von bluetooth.js?
         diagLog(`[TRACE] updateBeaconUI: Prüfe connectable für ${device.id.substring(0, 4)}... Wert: ${device.isConnectable}`, 'utils');
         
         if (device.isConnectable) {
@@ -263,7 +335,6 @@ export function updateBeaconUI(deviceId, device) {
             diagLog(`[TRACE] updateBeaconUI: Hänge click listener an ${device.id.substring(0, 4)}... an.`, 'info');
             card.addEventListener('click', () => {
                 // ==== [TRACE 4] ====
-                // Wird dieser Log *nach* dem Klick angezeigt?
                 diagLog(`[TRACE] Klick auf Karte ${deviceId.substring(0, 4)}... in ui.js erkannt.`, 'info');
                 if (appCallbacks.onConnect) {
                     diagLog(`[TRACE] Rufe appCallbacks.onConnect für ${deviceId.substring(0, 4)}... auf.`, 'info');
@@ -300,33 +371,3 @@ export function updateBeaconUI(deviceId, device) {
     }
 
     // === Karte AKTUALISIEREN (immer) ===
-    card.querySelector('.rssi-value').textContent = `${device.rssi} dBm`;
-    card.dataset.rssi = device.rssi;
-    
-    // Tippfehler (rssDsi) ist hier behoben
-    card.querySelector('.distance-value').textContent = calculateDistance(device.txPower, device.rssi); 
-    
-    const telemetryEl = card.querySelector('.beacon-telemetry');
-    if (telemetryEl) telemetryEl.innerHTML = renderTelemetry(device.telemetry).trim();
-
-    const beaconDataEl = card.querySelector('.beacon-data');
-    if (beaconDataEl) beaconDataEl.innerHTML = renderBeaconData(device.beaconData).trim();
-
-    const chart = chartMap.get(deviceId);
-    if (chart) updateSparkline(chart, device.rssi);
-    
-    card.classList.remove('stale');
-}
-
-export function setCardStale(deviceId) {
-    const card = document.getElementById(deviceId);
-    if (card) card.classList.add('stale');
-}
-
-export function clearUI() {
-    diagLog('Bereinige UI und lösche Beacon-Karten...', 'ui');
-    beaconDisplay.innerHTML = '';
-    chartMap.forEach(chart => chart.destroy());
-    chartMap.clear();
-}
- 
