@@ -1,10 +1,9 @@
 /**
- * js/ui.js (Version 8 - Smart UI mit GATT-Zusammenfassung)
- * * ARCHITEKTUR-HINWEIS:
- * - Importiert 'KNOWN_SERVICES'/'KNOWN_CHARACTERISTICS' aus utils.js.
- * - 'renderGattTree' füllt jetzt die neue '#gatt-summary'-Box.
- * - 'renderGattTree' zeigt jetzt die Namen von bekannten UUIDs im Roh-Baum an.
- * - 'updateCharacteristicValue' zeigt jetzt auch den dekodierten Wert an.
+ * js/ui.js (Version 7.5 - Sauber, keine Duplikate)
+ * * ARCHITEKTUR-HINWEIS: Layer 2 Modul.
+ * - Enthält Trace-Logs für das Debugging von 'isConnectable'.
+ * - Enthält den 'rssi'-Tippfehler-Fix.
+ * - Enthält die GATT-Summary-Logik.
  */
 
 import { diagLog } from './errorManager.js';
@@ -12,8 +11,8 @@ import {
     calculateDistance, 
     dataViewToHex, 
     dataViewToText, 
-    KNOWN_SERVICES,         // NEU
-    KNOWN_CHARACTERISTICS   // NEU
+    KNOWN_SERVICES,
+    KNOWN_CHARACTERISTICS
 } from './utils.js';
 
 // === MODULE STATE ===
@@ -29,23 +28,14 @@ const gattDeviceName = document.getElementById('gatt-device-name');
 const gattTreeContainer = document.getElementById('gatt-tree-container');
 const gattDisconnectButton = document.getElementById('gattDisconnectButton');
 const downloadButton = document.getElementById('downloadButton');
-
-// NEU: Summary-Box gecacht
 const gattSummaryBox = document.getElementById('gatt-summary');
 
 let isStaleModeActive = false;
 const chartMap = new Map();
 let appCallbacks = {};
 
-// === PRIVATE HELPER: CHARTING & RENDERING (Unverändert) ===
-function createSparkline(canvas) { /* ... (Vollständige Funktion) ... */ }
-function updateSparkline(chart, rssi) { /* ... (Vollständige Funktion) ... */ }
-function renderTelemetry(telemetry) { /* ... (Vollständige Funktion) ... */ }
-function renderBeaconData(beaconData) { /* ... (Vollständige Funktion) ... */ }
-function sortBeaconCards() { /* ... (Vollständige Funktion) ... */ }
-function handleStaleToggle() { /* ... (Vollständige Funktion) ... */ }
+// === PRIVATE HELPER: CHARTING ===
 
-// (Hier sind die vollständigen Helfer, um 'end of input'-Fehler zu vermeiden)
 function createSparkline(canvas) {
     const ctx = canvas.getContext('2d');
     return new Chart(ctx, {
@@ -58,6 +48,7 @@ function createSparkline(canvas) {
         }
     });
 }
+
 function updateSparkline(chart, rssi) {
     const data = chart.data.datasets[0].data;
     const labels = chart.data.labels;
@@ -66,8 +57,11 @@ function updateSparkline(chart, rssi) {
     if (data.length > 20) { data.shift(); labels.shift(); }
     chart.update('none');
 }
+
+// === PRIVATE HELPER: RENDERING ===
+
 function renderTelemetry(telemetry) {
-    if (!telemetry.temperature) return '';
+    if (!telemetry.temperature) return ''; // Prüft auf ein Ruuvi-spezifisches Feld
     return `
         <div class="beacon-telemetry">
             <span>🌡️ ${telemetry.temperature} °C</span>
@@ -77,22 +71,26 @@ function renderTelemetry(telemetry) {
         </div>
     `;
 }
+
 function renderBeaconData(beaconData) {
     if (Object.keys(beaconData).length === 0) return '';
     let html = '<div class="beacon-data">';
-    if (beaconData.uuid) {
+    
+    if (beaconData.uuid) { // iBeacon
         html += `
             <div><strong>UUID:</strong> ${beaconData.uuid}</div>
             <div><strong>Major:</strong> ${beaconData.major} | <strong>Minor:</strong> ${beaconData.minor}</div>
         `;
     }
-    if (beaconData.url) {
-        html += `<div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>`;
+    if (beaconData.url) { // Eddystone-URL
+        html += `
+            <div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>
+        `;
     }
-    if (beaconData.uid) {
+    if (beaconData.uid) { // Eddystone-UID
         html += `<div><strong>UID:</strong> ${beaconData.uid}</div>`;
     }
-    if (beaconData.telemetry) {
+    if (beaconData.telemetry) { // Eddystone-TLM
         const tlm = beaconData.telemetry;
         html += `
             <div class="beacon-telemetry">
@@ -106,12 +104,16 @@ function renderBeaconData(beaconData) {
     html += '</div>';
     return html;
 }
+
+// === PRIVATE HELPER: UI-AKTIONEN ===
+
 function sortBeaconCards() {
     diagLog('Sortiere Karten nach RSSI...', 'utils');
     const cards = Array.from(beaconDisplay.children);
     cards.sort((a, b) => (+b.dataset.rssi || -1000) - (+a.dataset.rssi || -1000));
     beaconDisplay.append(...cards);
 }
+
 function handleStaleToggle() {
     isStaleModeActive = staleToggle.checked;
     if (isStaleModeActive) {
@@ -122,21 +124,24 @@ function handleStaleToggle() {
 }
 
 // === PUBLIC API: VIEW-MANAGEMENT ===
+
 export function showView(viewName) {
     if (viewName === 'gatt') {
         beaconView.style.display = 'none';
         gattView.style.display = 'block';
         viewToggle.textContent = 'Beacon-Ansicht'; 
     } else {
+        // Standard ist Beacon-Ansicht
         gattView.style.display = 'none';
         beaconView.style.display = 'block';
         viewToggle.textContent = 'GATT-Ansicht';
     }
 }
+
 export function showConnectingState(name) {
     showView('gatt');
     gattDeviceName.textContent = `Verbinde mit: ${name}...`;
-    // NEU: Summary-Box ebenfalls zurücksetzen
+    // Summary-Box zurücksetzen
     gattSummaryBox.innerHTML = '';
     gattSummaryBox.style.display = 'none';
     gattTreeContainer.innerHTML = '<p>Verbinde und lese Services...</p>';
@@ -144,17 +149,11 @@ export function showConnectingState(name) {
 
 // === PUBLIC API: GATT-RENDERING ===
 
-/**
- * NEU: "Aufgebohrte" Render-Funktion.
- * @param {Array<object>} gattTree - Baumstruktur von bluetooth.js.
- * @param {string} deviceName - Name des Geräts.
- * @param {object} summary - Das automatisch dekodierte Zusammenfassungs-Objekt.
- */
 export function renderGattTree(gattTree, deviceName, summary) {
     gattDeviceName.textContent = `Verbunden mit: ${deviceName || 'Unbenannt'}`;
     gattTreeContainer.innerHTML = ''; // Roh-Baum leeren
     
-    // === 1. ZUSAMMENFASSUNG FÜLLEN (NEU) ===
+    // === 1. ZUSAMMENFASSUNG FÜLLEN ===
     if (summary && Object.keys(summary).length > 0) {
         let summaryHtml = '<h3>Geräte-Information</h3>';
         for (const [key, value] of Object.entries(summary)) {
@@ -172,7 +171,7 @@ export function renderGattTree(gattTree, deviceName, summary) {
         gattSummaryBox.style.display = 'none';
     }
 
-    // === 2. ROH-BAUM FÜLLEN (AKTUALISIERT) ===
+    // === 2. ROH-BAUM FÜLLEN ===
     if (gattTree.length === 0) {
         gattTreeContainer.innerHTML = '<p>Keine Services auf diesem Gerät gefunden.</p>';
         return;
@@ -182,7 +181,6 @@ export function renderGattTree(gattTree, deviceName, summary) {
         const serviceEl = document.createElement('div');
         serviceEl.className = 'gatt-service';
         
-        // NEU: Zeigt jetzt den Namen (falls bekannt) oder die UUID an
         serviceEl.innerHTML = `
             <div class="gatt-service-header">
                 <strong>Service: ${service.name}</strong>
@@ -206,7 +204,6 @@ export function renderGattTree(gattTree, deviceName, summary) {
                 const canNotify = props.notify || props.indicate ? '' : 'disabled';
                 const valueElId = `val-${char.uuid}`;
 
-                // NEU: Zeigt jetzt den Namen (falls bekannt) oder "Characteristic" an
                 charEl.innerHTML = `
                     <div class="gatt-char-details">
                         <div class="gatt-char-name">${char.name}</div>
@@ -243,9 +240,6 @@ export function renderGattTree(gattTree, deviceName, summary) {
     });
 }
 
-/**
- * NEU: Akzeptiert jetzt einen optionalen 'decodedValue' für die Anzeige.
- */
 export function updateCharacteristicValue(charUuid, value, isNotifying = false, decodedValue = null) {
     const valueEl = document.getElementById(`val-${charUuid}`);
     if (!valueEl) return;
@@ -257,7 +251,6 @@ export function updateCharacteristicValue(charUuid, value, isNotifying = false, 
     }
     
     if (value) {
-        // Zeige den dekodierten Wert (z.B. "85 %") ODER den Text-Fallback an
         const displayValue = decodedValue ? decodedValue : dataViewToText(value);
         const hexVal = dataViewToHex(value);
         
@@ -302,6 +295,7 @@ export function updateBeaconUI(deviceId, device) {
     let card = document.getElementById(deviceId);
     
     if (!card) {
+        // === Karte ERSTELLEN ===
         card = document.createElement('div');
         card.id = deviceId;
         card.className = 'beacon-card';
@@ -330,12 +324,12 @@ export function updateBeaconUI(deviceId, device) {
         
         card.innerHTML = `
             <h3>${device.name}</h3>
-            <div class="beacon-meta">
+            <div class.beacon-meta">
                 <small>${device.id}</small>
                 <span><strong>Firma:</strong> ${device.company}</span>
                 <span><strong>Typ:</strong> ${device.type}</span>
             </div>
-            <div class="beacon-signal">
+            <div class.beacon-signal">
                 <strong>RSSI:</strong> <span class="rssi-value">${device.rssi} dBm</span> | 
                 <strong>Distanz:</strong> <span class="distance-value">...</span>
             </div>
