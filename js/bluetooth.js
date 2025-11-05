@@ -1,10 +1,12 @@
 /**
- * js/bluetooth.js (Version 9.5 - GATT-Stabilitätspatch)
+ * js/bluetooth.js (Version 9.6 - Handshake-Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - connectToDevice gibt jetzt 'true' bei Erfolg
- * und 'false' bei einem Fehler zurück.
- * - Dies ermöglicht es app.js, den Scan bei einem
- * Verbindungsfehler (z.B. "Not authorized") neu zu starten.
+ * - Behebt den "GATT operation not authorized"-Fehler.
+ * - connectToDevice ruft jetzt navigator.bluetooth.requestDevice()
+ * mit einem Namensfilter auf, um die explizite Benutzererlaubnis
+ * über den Browser-Dialog (Handshake) einzuholen.
+ * - Erst das *neue* Device-Objekt aus requestDevice wird für
+ * device.gatt.connect() verwendet.
  */
 
 import { diagLog } from './errorManager.js';
@@ -55,7 +57,7 @@ function handleAdvertisement(event) {
         parsedData.isConnectable = isInteresting;
         
         deviceMap.set(device.id, {
-            deviceObject: device, 
+            deviceObject: device, // Wir behalten dies für Referenzen, aber nicht zum Verbinden
             parsedData: parsedData
         });
         
@@ -111,8 +113,6 @@ export async function startScan() {
         diagLog('Scan läuft bereits.', 'warn');
         return;
     }
-    // V9.5 HINWEIS: Wichtig, damit der Neustart nach einem
-    // Verbindungsfehler den Benutzer zurück zur Scan-Liste bringt.
     showView('beacon');
     
     setScanStatus(true);
@@ -169,27 +169,54 @@ export function disconnect() {
 // === PUBLIC API: GATT INTERACTION ===
 
 /**
- * V9.5 PATCH: Gibt jetzt 'true' oder 'false' zurück.
+ * V9.6 PATCH: Implementiert den Handshake (requestDevice).
  * @returns {Promise<boolean>} - True bei Erfolg, False bei Fehler.
  */
 export async function connectToDevice(deviceId) {
     diagLog(`[TRACE] connectToDevice(${deviceId.substring(0, 4)}...) in bluetooth.js gestartet.`, 'bt');
     const deviceData = deviceMap.get(deviceId);
+    
     if (!deviceData) {
         diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
         setGattConnectingUI(false, 'Gerät nicht gefunden');
-        return false; // V9.5 PATCH
+        return false;
+    }
+
+    // Wir brauchen den Namen des Geräts für den Filter
+    const deviceName = deviceData.parsedData.name;
+    if (!deviceName) {
+        diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} hat keinen Namen, Handshake nicht möglich.`, 'error');
+        setGattConnectingUI(false, 'Gerät hat keinen Namen');
+        return false;
     }
     
     setGattConnectingUI(true); 
     gattCharacteristicMap.clear();
 
     try {
-        const device = deviceData.deviceObject;
+        // --- V9.6 HANDSHAKE START ---
+        // 1. Explizite Erlaubnis vom Benutzer anfordern
+        // Wir filtern nach dem Namen, den wir beim Scannen gesehen haben.
+        diagLog(`[Handshake] Fordere Erlaubnis für Gerät mit Namen an: "${deviceName}"`, 'bt');
+        
+        const device = await navigator.bluetooth.requestDevice({
+            filters: [{ name: deviceName }],
+            // Wir fordern optional die Dienste an, die wir später lesen wollen (Smart Driver)
+            optionalServices: [
+                '0000180a-0000-1000-8000-00805f9b34fb', // Device Information
+                '0000180f-0000-1000-8000-00805f9b34fb'  // Battery Service
+            ]
+        });
+        
+        diagLog(`[Handshake] Erlaubnis erteilt. Verbinde mit ${device.name}...`, 'bt');
+        // --- V9.6 HANDSHAKE ENDE ---
+
+        // 2. Mit dem *neuen*, autorisierten 'device'-Objekt verbinden
         device.addEventListener('gattserverdisconnected', onGattDisconnect);
         gattServer = await device.gatt.connect();
         diagLog('GATT-Server verbunden. Lese Services...', 'bt');
         
+        // 3. Service Discovery (wie bisher)
         const services = await gattServer.getPrimaryServices();
         diagLog(`Services gefunden: ${services.length}`, 'bt');
         
@@ -226,6 +253,7 @@ export async function connectToDevice(deviceId) {
                     properties: char.properties
                 });
 
+                // Smart Driver
                 if (char.properties.read && 
                    (serviceName === 'Device Information' || serviceName === 'Battery Service')) 
                 {
@@ -242,17 +270,23 @@ export async function connectToDevice(deviceId) {
             gattTree.push(serviceData);
         }
         
+        // 4. Erfolg (wie bisher)
         setGattConnectingUI(false, null, true); 
         renderGattTree(gattTree, device.name, gattSummary);
         
-        return true; // V9.5 PATCH: Erfolg melden
+        return true; // Erfolg melden
 
     } catch (err) {
         diagLog(`GATT-Verbindungsfehler: ${err.message}`, 'error');
+        
+        if (err.name === 'NotFoundError' || err.name === 'NotAllowedError') {
+             diagLog('Handshake vom Benutzer abgelehnt oder Gerät nicht gefunden.', 'warn');
+        }
+        
         onGattDisconnect(); 
         setGattConnectingUI(false, err.message); 
         
-        return false; // V9.5 PATCH: Misserfolg melden
+        return false; // Misserfolg melden
     }
 }
 
