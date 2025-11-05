@@ -1,17 +1,15 @@
 /**
- * js/ui.js (Version 3 - Interaktives GATT-Rendering)
+ * js/ui.js (Version 4 - Prüft auf 'connectable')
  * * ARCHITEKTUR-HINWEIS:
- * - rendert jetzt interaktive GATT-Buttons basierend auf Properties.
- * - Fügt `updateCharacteristicValue` hinzu (wird von bluetooth.js aufgerufen).
- * - Importiert helper aus utils.js zum Parsen von Werten.
+ * - updateBeaconUI fügt den Click-Listener und die 'cursor: pointer'-Klasse
+ * jetzt NUR NOCH hinzu, wenn device.isConnectable === true.
+ * - Fügt die .not-connectable-Klasse hinzu, wenn false.
  */
 
 import { diagLog } from './errorManager.js';
-import { calculateDistance, dataViewToHex, dataViewToText } from './utils.js'; // NEU: dataView-Helper
+import { calculateDistance, dataViewToHex, dataViewToText } from './utils.js';
 
 // === MODULE STATE ===
-
-// --- DOM-Elemente (gecacht) ---
 const scanButton = document.getElementById('scanButton');
 const disconnectButton = document.getElementById('disconnectButton');
 const viewToggle = document.getElementById('viewToggle');
@@ -24,13 +22,11 @@ const gattDeviceName = document.getElementById('gatt-device-name');
 const gattTreeContainer = document.getElementById('gatt-tree-container');
 const gattDisconnectButton = document.getElementById('gattDisconnectButton');
 
-
 let isStaleModeActive = false;
 const chartMap = new Map();
 let appCallbacks = {};
 
-// === PRIVATE HELPER: CHARTING & RENDERING (Keine Änderungen hier) ===
-
+// === PRIVATE HELPER: CHARTING & RENDERING (Keine Änderungen) ===
 function createSparkline(canvas) { /* ... (Code von oben) ... */ 
     const ctx = canvas.getContext('2d');
     return new Chart(ctx, {
@@ -85,10 +81,8 @@ function handleStaleToggle() { /* ... (Code von oben) ... */
         beaconDisplay.classList.remove('stale-mode');
     }
 }
-
-// === PUBLIC API: VIEW-MANAGEMENT ===
-
-export function showView(viewName) {
+// === PUBLIC API: VIEW-MANAGEMENT (Keine Änderungen) ===
+export function showView(viewName) { /* ... (Code von oben) ... */ 
     if (viewName === 'gatt') {
         beaconView.style.display = 'none';
         gattView.style.display = 'block';
@@ -99,21 +93,14 @@ export function showView(viewName) {
         viewToggle.textContent = 'GATT-Ansicht (WIP)';
     }
 }
-
-export function showConnectingState(name) {
+export function showConnectingState(name) { /* ... (Code von oben) ... */ 
     showView('gatt');
     gattDeviceName.textContent = `Verbinde mit: ${name}...`;
     gattTreeContainer.innerHTML = '<p>Verbinde und lese Services...</p>';
 }
 
-// === PUBLIC API: GATT-RENDERING & UPDATE ===
-
-/**
- * NEU: Rendert den interaktiven GATT-Baum.
- * @param {Array<object>} gattTree - Baumstruktur von bluetooth.js.
- * @param {string} deviceName - Name des Geräts.
- */
-export function renderGattTree(gattTree, deviceName) {
+// === PUBLIC API: GATT-RENDERING (Keine Änderungen) ===
+export function renderGattTree(gattTree, deviceName) { /* ... (Code von oben) ... */ 
     gattDeviceName.textContent = `Verbunden mit: ${deviceName || 'Unbenannt'}`;
     gattTreeContainer.innerHTML = '';
     
@@ -142,13 +129,10 @@ export function renderGattTree(gattTree, deviceName) {
                 const charEl = document.createElement('div');
                 charEl.className = 'gatt-char';
                 
-                // === NEUE INTERAKTIVE LOGIK ===
                 const props = char.properties;
                 const canRead = props.read ? '' : 'disabled';
                 const canWrite = props.write ? '' : 'disabled';
                 const canNotify = props.notify || props.indicate ? '' : 'disabled';
-                
-                // Eindeutige ID für das Wert-Feld erstellen
                 const valueElId = `val-${char.uuid}`;
 
                 charEl.innerHTML = `
@@ -164,8 +148,6 @@ export function renderGattTree(gattTree, deviceName) {
                     </div>
                 `;
                 
-                // WIE: Event-Listener HIER hinzufügen (Dependency Inversion)
-                // Wir rufen die Callbacks auf, die app.js uns gegeben hat.
                 if (canRead === '') {
                     charEl.querySelector('.gatt-read-btn').addEventListener('click', () => {
                         appCallbacks.onRead(char.uuid);
@@ -174,7 +156,6 @@ export function renderGattTree(gattTree, deviceName) {
                 if (canNotify === '') {
                     charEl.querySelector('.gatt-notify-btn').addEventListener('click', (e) => {
                         appCallbacks.onNotify(char.uuid);
-                        // Visuelles Feedback, dass Notify aktiv ist
                         e.target.style.borderColor = 'var(--accent-color-main)';
                         e.target.style.color = 'var(--accent-color-main)';
                         e.target.disabled = true;
@@ -189,14 +170,7 @@ export function renderGattTree(gattTree, deviceName) {
         gattTreeContainer.appendChild(serviceEl);
     });
 }
-
-/**
- * NEU: Wird von bluetooth.js aufgerufen, um den Wert im UI zu aktualisieren.
- * @param {string} charUuid - Die UUID der Characteristic.
- * @param {DataView | null} value - Der gelesene Wert (DataView) oder null.
- * @param {boolean} [isNotifying=false] - (Optional) Nur um "Notify aktiv" anzuzeigen.
- */
-export function updateCharacteristicValue(charUuid, value, isNotifying = false) {
+export function updateCharacteristicValue(charUuid, value, isNotifying = false) { /* ... (Code von oben) ... */ 
     const valueEl = document.getElementById(`val-${charUuid}`);
     if (!valueEl) return;
 
@@ -207,11 +181,8 @@ export function updateCharacteristicValue(charUuid, value, isNotifying = false) 
     }
     
     if (value) {
-        // WIR RUFEN UTILS.JS AUF:
-        // Versuche, als Text zu dekodieren, falle auf Hex zurück
         const textVal = dataViewToText(value);
         const hexVal = dataViewToHex(value);
-        
         valueEl.innerHTML = `Wert: ${textVal} <br><small>(${hexVal})</small>`;
         valueEl.style.color = "var(--text-color)";
     }
@@ -220,8 +191,7 @@ export function updateCharacteristicValue(charUuid, value, isNotifying = false) 
 // === PUBLIC API: SETUP & BEACON UPDATE ===
 
 export function setupUIListeners(callbacks) {
-    appCallbacks = callbacks; // Callbacks global speichern
-
+    appCallbacks = callbacks;
     scanButton.addEventListener('click', callbacks.onScan);
     disconnectButton.addEventListener('click', callbacks.onStopScan);
     gattDisconnectButton.addEventListener('click', callbacks.onGattDisconnect);
@@ -249,19 +219,32 @@ export function setScanStatus(isScanning) { /* ... (Code von oben) ... */
     }
 }
 
+/**
+ * Die Haupt-Rendering-Funktion. Erstellt oder aktualisiert eine Beacon-Karte.
+ * @param {string} deviceId - Die eindeige ID des Geräts.
+ * @param {object} device - Das von utils.js geparste Geräte-Objekt.
+ */
 export function updateBeaconUI(deviceId, device) {
     let card = document.getElementById(deviceId);
     
     if (!card) {
+        // === Karte ERSTELLEN ===
         card = document.createElement('div');
         card.id = deviceId;
         card.className = 'beacon-card';
-        card.addEventListener('click', () => {
-            // WIE: Callback-Aufruf bei Klick
-            if (appCallbacks.onConnect) {
-                appCallbacks.onConnect(deviceId);
-            }
-        });
+        
+        // ==== HIER IST DIE NEUE LOGIK ====
+        if (device.isConnectable) {
+            // Gerät ist verbindungsfähig: Click-Listener hinzufügen
+            card.addEventListener('click', () => {
+                if (appCallbacks.onConnect) {
+                    appCallbacks.onConnect(deviceId);
+                }
+            });
+        } else {
+            // Gerät ist NICHT verbindungsfähig: Visuell deaktivieren
+            card.classList.add('not-connectable');
+        }
         
         card.innerHTML = `
             <h3>${device.name}</h3>
@@ -284,7 +267,7 @@ export function updateBeaconUI(deviceId, device) {
         if (canvas) chartMap.set(deviceId, createSparkline(canvas));
     }
 
-    // Updates...
+    // === Karte AKTUALISIEREN (immer) ===
     card.querySelector('.rssi-value').textContent = `${device.rssi} dBm`;
     card.dataset.rssi = device.rssi;
     card.querySelector('.distance-value').textContent = calculateDistance(device.txPower, device.rssi);
