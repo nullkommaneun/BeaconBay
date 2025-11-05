@@ -1,7 +1,8 @@
 /**
- * js/ui.js (Version 7.1 - Vollständig, keine Platzhalter)
+ * js/ui.js (Version 7.2 - Tippfehler behoben)
  * * ARCHITEKTUR-HINWEIS:
- * - Dies ist die vollständige Datei, die alle UI-Funktionen enthält.
+ * - Behebt 'rssDsi'-Tippfehler in 'updateBeaconUI'.
+ * - Enthält die 'connectable'-Logik.
  */
 
 import { diagLog } from './errorManager.js';
@@ -237,10 +238,6 @@ export function setupUIListeners(callbacks) {
     diagLog('UI-Event-Listener erfolgreich gebunden.', 'info');
 }
 
-/**
- * Setzt den visuellen Status der Scan-Buttons.
- * @param {boolean} isScanning - True, wenn der Scan läuft.
- */
 export function setScanStatus(isScanning) {
     if (isScanning) {
         scanButton.disabled = true;
@@ -253,11 +250,6 @@ export function setScanStatus(isScanning) {
     }
 }
 
-/**
- * Die Haupt-Rendering-Funktion. Erstellt oder aktualisiert eine Beacon-Karte.
- * @param {string} deviceId - Die eindeige ID des Geräts.
- * @param {object} device - Das von utils.js geparste Geräte-Objekt.
- */
 export function updateBeaconUI(deviceId, device) {
     let card = document.getElementById(deviceId);
     
@@ -267,6 +259,7 @@ export function updateBeaconUI(deviceId, device) {
         card.id = deviceId;
         card.className = 'beacon-card';
         
+        // HIER WIRD DIE 'connectable'-LOGIK ANGEWENDET
         if (device.isConnectable) {
             card.addEventListener('click', () => {
                 if (appCallbacks.onConnect) {
@@ -301,7 +294,8 @@ export function updateBeaconUI(deviceId, device) {
     // === Karte AKTUALISIEREN (immer) ===
     card.querySelector('.rssi-value').textContent = `${device.rssi} dBm`;
     card.dataset.rssi = device.rssi;
-    // HINWEIS: Es gab einen Tippfehler in einer früheren Version (rssDsi), hier korrigiert:
+    
+    // ==== HIER IST DIE TIPPFHLER-KORREKTUR ====
     card.querySelector('.distance-value').textContent = calculateDistance(device.txPower, device.rssi); 
     
     const telemetryEl = card.querySelector('.beacon-telemetry');
@@ -316,23 +310,15 @@ export function updateBeaconUI(deviceId, device) {
     card.classList.remove('stale');
 }
 
-/**
- * Markiert eine Beacon-Karte visuell als "stale" (veraltet).
- * @param {string} deviceId - Die ID der Karte.
- */
 export function setCardStale(deviceId) {
     const card = document.getElementById(deviceId);
     if (card) card.classList.add('stale');
 }
 
-/**
- * Bereinigt die UI (Beacon-Karten und Charts), wenn der Scan stoppt.
- */
 export function clearUI() {
     diagLog('Bereinige UI und lösche Beacon-Karten...', 'ui');
     beaconDisplay.innerHTML = '';
-    
-    // WICHTIG: Chart-Instanzen zerstören, um Memory-Leaks zu vermeiden
     chartMap.forEach(chart => chart.destroy());
     chartMap.clear();
 }
+ 
