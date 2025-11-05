@@ -4,6 +4,7 @@
  * - 'connectToDevice' stoppt den Scan NICHT MEHR.
  * - Das Stoppen des Scans wird jetzt von app.js (dem Dirigenten)
  * als Reaktion auf den 'onGattConnect'-Callback gesteuert.
+ * - 'onGattDisconnect' startet den Scan nicht mehr neu.
  */
 
 import { diagLog } from './errorManager.js';
@@ -20,9 +21,10 @@ import {
     clearUI, 
     setCardStale,
     renderGattTree,
-    showConnectingState,
+    // showConnectingState, // Veraltet, wird jetzt von showInspectorView übernommen
     showView,
-    updateCharacteristicValue
+    updateCharacteristicValue,
+    setGattConnectingUI // NEU
 } from './ui.js';
 
 // === MODULE STATE ===
@@ -59,6 +61,7 @@ function handleAdvertisement(event) {
         });
         
         updateBeaconUI(device.id, parsedData);
+
     } catch (err) {
         diagLog(`Fehler in handleAdvertisement: ${err.message}`, 'error');
     }
@@ -73,18 +76,16 @@ function checkStaleDevices() {
     });
 }
 
-/**
- * Aufräumfunktion bei GATT-Trennung.
- * WICHTIG: Startet den Scan NICHT neu. Das überlassen wir dem Benutzer.
- */
 function onGattDisconnect() {
     diagLog('GATT-Verbindung getrennt.', 'bt');
+    if (gattServer) {
+        gattServer.device.removeEventListener('gattserverdisconnected', onGattDisconnect);
+    }
     gattServer = null;
     gattCharacteristicMap.clear();
-    // Setzt nur die GATT-UI zurück, ändert aber nicht die Ansicht
     setScanStatus(false); // Scan-Buttons zurücksetzen
-    // Wir könnten hier ui.resetGattView() aufrufen, um die
-    // Buttons (Connect/Disconnect) in der Inspektor-Ansicht zurückzusetzen.
+    // Sagt der UI, die GATT-Buttons zurückzusetzen
+    setGattConnectingUI(false, null); 
 }
 
 function handleValueChange(event) {
@@ -108,7 +109,12 @@ export function initBluetooth() {
 }
 
 export async function startScan() {
-    if (activeScan && activeScan.active) return;
+    if (activeScan && activeScan.active) {
+        diagLog('Scan läuft bereits.', 'warn');
+        return;
+    }
+    // Stelle sicher, dass wir in der Beacon-Ansicht sind
+    showView('beacon');
     setScanStatus(true);
     clearUI(); 
     deviceMap.clear(); 
@@ -148,23 +154,27 @@ export function stopScan() {
 }
 
 export function disconnect() {
-    if (!gattServer) return;
+    if (!gattServer) {
+        diagLog('Keine Verbindung zum Trennen vorhanden.', 'warn');
+        return;
+    }
     gattServer.disconnect(); 
+    // onGattDisconnect() wird durch das Event aufgerufen
 }
 
 // === PUBLIC API: GATT INTERACTION ===
 
-/**
- * NEUE "DUMME" VERSION: Stoppt den Scan nicht mehr.
- * Geht davon aus, dass der Scan bereits von app.js gestoppt wurde.
- */
 export async function connectToDevice(deviceId) {
     diagLog(`[TRACE] connectToDevice(${deviceId.substring(0, 4)}...) in bluetooth.js gestartet.`, 'bt');
     const deviceData = deviceMap.get(deviceId);
-    if (!deviceData) return diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
+    if (!deviceData) {
+        diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
+        setGattConnectingUI(false, 'Gerät nicht gefunden'); // UI zurücksetzen
+        return;
+    }
     
-    // UI in Ladezustand versetzen
-    showConnectingState(deviceData.parsedData.name);
+    // UI in "Verbinde..."-Zustand versetzen
+    setGattConnectingUI(true); 
     gattCharacteristicMap.clear();
 
     try {
@@ -225,12 +235,14 @@ export async function connectToDevice(deviceId) {
             gattTree.push(serviceData);
         }
         
+        // UI benachrichtigen, dass Verbindung erfolgreich war
+        setGattConnectingUI(false, null, true); // isConnecting=false, error=null, isConnected=true
         renderGattTree(gattTree, device.name, gattSummary);
 
     } catch (err) {
         diagLog(`GATT-Verbindungsfehler: ${err.message}`, 'error');
         onGattDisconnect(); 
-        // WICHTIG: Wir starten den Scan NICHT neu.
+        setGattConnectingUI(false, err.message); // UI zurücksetzen mit Fehler
     }
 }
 
@@ -265,4 +277,3 @@ export async function startNotifications(charUuid) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
 }
- 
