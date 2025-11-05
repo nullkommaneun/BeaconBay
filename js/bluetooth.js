@@ -1,12 +1,10 @@
 /**
- * js/bluetooth.js (Version 9.6 - Handshake-Patch)
+ * js/bluetooth.js (Version 9.7 - Handshake-Workflow-Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - Behebt den "GATT operation not authorized"-Fehler.
- * - connectToDevice ruft jetzt navigator.bluetooth.requestDevice()
- * mit einem Namensfilter auf, um die explizite Benutzererlaubnis
- * über den Browser-Dialog (Handshake) einzuholen.
- * - Erst das *neue* Device-Objekt aus requestDevice wird für
- * device.gatt.connect() verwendet.
+ * - 'connectToDevice' wurde aufgeteilt in:
+ * 1. requestDeviceForHandshake(deviceId): Führt Handshake durch (Scan muss laufen).
+ * 2. connectWithAuthorizedDevice(device): Verbindet (Scan muss gestoppt sein).
+ * - app.js (der Dirigent) steuert den Scan-Stopp *zwischen* diesen beiden Aufrufen.
  */
 
 import { diagLog } from './errorManager.js';
@@ -42,6 +40,7 @@ const STALE_CHECK_INTERVAL_MS = 2000;
 // === PRIVATE HELPER: SCANNING ===
 
 function handleAdvertisement(event) {
+    // ... (unverändert)
     try {
         logAdvertisement(event);
         
@@ -57,7 +56,7 @@ function handleAdvertisement(event) {
         parsedData.isConnectable = isInteresting;
         
         deviceMap.set(device.id, {
-            deviceObject: device, // Wir behalten dies für Referenzen, aber nicht zum Verbinden
+            deviceObject: device, 
             parsedData: parsedData
         });
         
@@ -69,6 +68,7 @@ function handleAdvertisement(event) {
 }
 
 function checkStaleDevices() {
+    // ... (unverändert)
     const now = Date.now();
     deviceMap.forEach((data, deviceId) => {
         if (now - data.parsedData.lastSeen > STALE_DEVICE_THRESHOLD_MS) {
@@ -78,6 +78,7 @@ function checkStaleDevices() {
 }
 
 function onGattDisconnect() {
+    // ... (unverändert)
     diagLog('GATT-Verbindung getrennt.', 'bt');
     if (gattServer) {
         gattServer.device.removeEventListener('gattserverdisconnected', onGattDisconnect);
@@ -89,6 +90,7 @@ function onGattDisconnect() {
 }
 
 function handleValueChange(event) {
+    // ... (unverändert)
     const charUuid = event.target.uuid;
     const value = event.target.value; 
     const shortCharUuid = charUuid.startsWith("0000") ? `0x${charUuid.substring(4, 8)}` : charUuid;
@@ -100,6 +102,7 @@ function handleValueChange(event) {
 // === PUBLIC API: SCAN & BASE CONNECT ===
 
 export function initBluetooth() {
+    // ... (unverändert)
     deviceMap.clear();
     gattCharacteristicMap.clear();
     if (staleCheckInterval) clearInterval(staleCheckInterval);
@@ -109,6 +112,7 @@ export function initBluetooth() {
 }
 
 export async function startScan() {
+    // ... (unverändert)
     if (activeScan && activeScan.active) {
         diagLog('Scan läuft bereits.', 'warn');
         return;
@@ -135,6 +139,7 @@ export async function startScan() {
 }
 
 export function stopScan() {
+    // ... (unverändert)
     navigator.bluetooth.removeEventListener('advertisementreceived', handleAdvertisement);
     if (activeScan && activeScan.active) {
         try {
@@ -154,6 +159,7 @@ export function stopScan() {
 }
 
 export function disconnect() {
+    // ... (unverändert)
     if (!gattServer) {
         diagLog('[BT] disconnect: Ignoriert, da gattServer null ist.', 'bt');
         return;
@@ -166,57 +172,76 @@ export function disconnect() {
     }
 }
 
-// === PUBLIC API: GATT INTERACTION ===
+// === PUBLIC API: GATT INTERACTION (V9.7 PATCH) ===
 
 /**
- * V9.6 PATCH: Implementiert den Handshake (requestDevice).
- * @returns {Promise<boolean>} - True bei Erfolg, False bei Fehler.
+ * V9.7 NEU: Phase 1 - Führt NUR den Handshake (requestDevice) durch.
+ * Der Scan MUSS währenddessen laufen.
+ * @param {string} deviceId - Die ID des Geräts aus unserer 'deviceMap'.
+ * @returns {Promise<BluetoothDevice | null>} - Das autorisierte Gerät oder null.
  */
-export async function connectToDevice(deviceId) {
-    diagLog(`[TRACE] connectToDevice(${deviceId.substring(0, 4)}...) in bluetooth.js gestartet.`, 'bt');
+export async function requestDeviceForHandshake(deviceId) {
+    diagLog(`[Handshake] Starte für ${deviceId.substring(0, 4)}...`, 'bt');
     const deviceData = deviceMap.get(deviceId);
     
     if (!deviceData) {
-        diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
-        setGattConnectingUI(false, 'Gerät nicht gefunden');
-        return false;
+        diagLog(`[Handshake] FEHLER: Gerät ${deviceId} nicht in deviceMap gefunden.`, 'error');
+        return null;
     }
 
-    // Wir brauchen den Namen des Geräts für den Filter
     const deviceName = deviceData.parsedData.name;
     if (!deviceName) {
-        diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} hat keinen Namen, Handshake nicht möglich.`, 'error');
-        setGattConnectingUI(false, 'Gerät hat keinen Namen');
-        return false;
+        diagLog(`[Handshake] FEHLER: Gerät ${deviceId} hat keinen Namen.`, 'error');
+        return null;
     }
     
+    // UI in "Verbinde..."-Zustand versetzen, während Pop-up offen ist
     setGattConnectingUI(true); 
-    gattCharacteristicMap.clear();
 
     try {
-        // --- V9.6 HANDSHAKE START ---
-        // 1. Explizite Erlaubnis vom Benutzer anfordern
-        // Wir filtern nach dem Namen, den wir beim Scannen gesehen haben.
         diagLog(`[Handshake] Fordere Erlaubnis für Gerät mit Namen an: "${deviceName}"`, 'bt');
         
         const device = await navigator.bluetooth.requestDevice({
             filters: [{ name: deviceName }],
-            // Wir fordern optional die Dienste an, die wir später lesen wollen (Smart Driver)
             optionalServices: [
                 '0000180a-0000-1000-8000-00805f9b34fb', // Device Information
                 '0000180f-0000-1000-8000-00805f9b34fb'  // Battery Service
             ]
         });
         
-        diagLog(`[Handshake] Erlaubnis erteilt. Verbinde mit ${device.name}...`, 'bt');
-        // --- V9.6 HANDSHAKE ENDE ---
+        diagLog(`[Handshake] Erlaubnis erteilt für: ${device.name}`, 'bt');
+        return device; // Gibt das autorisierte Gerät zurück
 
-        // 2. Mit dem *neuen*, autorisierten 'device'-Objekt verbinden
+    } catch (err) {
+        diagLog(`[Handshake] FEHLER: ${err.message}`, 'error');
+        if (err.name === 'NotFoundError' || err.name === 'NotAllowedError') {
+             diagLog('Handshake vom Benutzer abgelehnt oder Gerät nicht gefunden.', 'warn');
+        }
+        return null; // Gibt null bei Fehler/Ablehnung zurück
+    }
+}
+
+/**
+ * V9.7 NEU: Phase 2 - Hieß vorher 'connectToDevice'.
+ * Nimmt jetzt ein *bereits autorisiertes* Gerät und führt
+ * die GATT-Verbindung und Service Discovery durch.
+ * Geht davon aus, dass der Scan bereits gestoppt wurde.
+ * @param {BluetoothDevice} device - Das autorisierte Gerät von requestDeviceForHandshake.
+ * @returns {Promise<boolean>} - True bei Erfolg, False bei Fehler.
+ */
+export async function connectWithAuthorizedDevice(device) {
+    diagLog(`[TRACE] connectWithAuthorizedDevice(${device.name}) gestartet.`, 'bt');
+    
+    // UI ist bereits im "Verbinde..."-Zustand von Phase 1
+    gattCharacteristicMap.clear();
+
+    try {
+        // 1. Mit dem autorisierten 'device'-Objekt verbinden
         device.addEventListener('gattserverdisconnected', onGattDisconnect);
         gattServer = await device.gatt.connect();
         diagLog('GATT-Server verbunden. Lese Services...', 'bt');
         
-        // 3. Service Discovery (wie bisher)
+        // 2. Service Discovery (wie bisher)
         const services = await gattServer.getPrimaryServices();
         diagLog(`Services gefunden: ${services.length}`, 'bt');
         
@@ -270,7 +295,7 @@ export async function connectToDevice(deviceId) {
             gattTree.push(serviceData);
         }
         
-        // 4. Erfolg (wie bisher)
+        // 3. Erfolg (wie bisher)
         setGattConnectingUI(false, null, true); 
         renderGattTree(gattTree, device.name, gattSummary);
         
@@ -278,11 +303,6 @@ export async function connectToDevice(deviceId) {
 
     } catch (err) {
         diagLog(`GATT-Verbindungsfehler: ${err.message}`, 'error');
-        
-        if (err.name === 'NotFoundError' || err.name === 'NotAllowedError') {
-             diagLog('Handshake vom Benutzer abgelehnt oder Gerät nicht gefunden.', 'warn');
-        }
-        
         onGattDisconnect(); 
         setGattConnectingUI(false, err.message); 
         
@@ -290,7 +310,9 @@ export async function connectToDevice(deviceId) {
     }
 }
 
+
 export async function readCharacteristic(charUuid) {
+    // ... (unverändert)
     const char = gattCharacteristicMap.get(charUuid);
     if (!char || !char.properties.read) {
         return diagLog(`Lesefehler: Char ${charUuid} nicht gefunden oder nicht lesbar.`, 'error');
@@ -307,6 +329,7 @@ export async function readCharacteristic(charUuid) {
 }
 
 export async function startNotifications(charUuid) {
+    // ... (unverändert)
     const char = gattCharacteristicMap.get(charUuid);
     if (!char || !(char.properties.notify || char.properties.indicate)) {
         return diagLog(`Notify-Fehler: Char ${charUuid} nicht gefunden oder nicht abonnierbar.`, 'error');
@@ -321,3 +344,4 @@ export async function startNotifications(charUuid) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
 }
+ 
