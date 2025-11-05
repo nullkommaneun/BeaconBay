@@ -1,9 +1,8 @@
 /**
- * js/ui.js (Version 4 - Prüft auf 'connectable')
+ * js/ui.js (Version 5 - Mit Eddystone-Rendering)
  * * ARCHITEKTUR-HINWEIS:
- * - updateBeaconUI fügt den Click-Listener und die 'cursor: pointer'-Klasse
- * jetzt NUR NOCH hinzu, wenn device.isConnectable === true.
- * - Fügt die .not-connectable-Klasse hinzu, wenn false.
+ * - renderBeaconData kann jetzt 'url', 'uid' und 'telemetry'
+ * (von Eddystone-TLM) anzeigen.
  */
 
 import { diagLog } from './errorManager.js';
@@ -26,8 +25,8 @@ let isStaleModeActive = false;
 const chartMap = new Map();
 let appCallbacks = {};
 
-// === PRIVATE HELPER: CHARTING & RENDERING (Keine Änderungen) ===
-function createSparkline(canvas) { /* ... (Code von oben) ... */ 
+// === PRIVATE HELPER: CHARTING ===
+function createSparkline(canvas) {
     const ctx = canvas.getContext('2d');
     return new Chart(ctx, {
         type: 'line',
@@ -39,7 +38,7 @@ function createSparkline(canvas) { /* ... (Code von oben) ... */
         }
     });
 }
-function updateSparkline(chart, rssi) { /* ... (Code von oben) ... */ 
+function updateSparkline(chart, rssi) {
     const data = chart.data.datasets[0].data;
     const labels = chart.data.labels;
     data.push(rssi);
@@ -47,8 +46,12 @@ function updateSparkline(chart, rssi) { /* ... (Code von oben) ... */
     if (data.length > 20) { data.shift(); labels.shift(); }
     chart.update('none');
 }
-function renderTelemetry(telemetry) { /* ... (Code von oben) ... */ 
-    if (Object.keys(telemetry).length === 0) return '';
+
+// === PRIVATE HELPER: RENDERING ===
+
+function renderTelemetry(telemetry) {
+    // Dieser Renderer ist für Ruuvi-Daten.
+    if (!telemetry.temperature) return '';
     return `
         <div class="beacon-telemetry">
             <span>🌡️ ${telemetry.temperature} °C</span>
@@ -58,22 +61,67 @@ function renderTelemetry(telemetry) { /* ... (Code von oben) ... */
         </div>
     `;
 }
-function renderBeaconData(beaconData) { /* ... (Code von oben) ... */ 
+
+/**
+ * NEU: Rendert iBeacon, Eddystone-URL, Eddystone-UID und Eddystone-TLM.
+ * @param {object} beaconData - Das beaconData-Objekt von utils.js.
+ * @returns {string} - Der HTML-String.
+ */
+function renderBeaconData(beaconData) {
     if (Object.keys(beaconData).length === 0) return '';
-    return `
-        <div class="beacon-data">
+
+    let html = '<div class="beacon-data">';
+    
+    // Fall 1: iBeacon
+    if (beaconData.uuid) {
+        html += `
             <div><strong>UUID:</strong> ${beaconData.uuid}</div>
-            <div><strong>Major:</strong> ${beaconData.major} | <strong>Minor:</strong> ${beaconData.minor}</div>
-        </div>
-    `;
+            <div>
+                <strong>Major:</strong> ${beaconData.major} | 
+                <strong>Minor:</strong> ${beaconData.minor}
+            </div>
+        `;
+    }
+    
+    // Fall 2: Eddystone-URL
+    if (beaconData.url) {
+        html += `
+            <div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>
+        `;
+    }
+    
+    // Fall 3: Eddystone-UID
+    if (beaconData.uid) {
+        html += `
+            <div><strong>UID:</strong> ${beaconData.uid}</div>
+        `;
+    }
+    
+    // Fall 4: Eddystone-TLM (Telemetry)
+    if (beaconData.telemetry) {
+        const tlm = beaconData.telemetry;
+        html += `
+            <div class="beacon-telemetry">
+                <span>🔋 ${tlm.voltage} mV</span>
+                <span>🌡️ ${tlm.temperature} °C</span>
+                <span>📡 AdvCount: ${tlm.advCount}</span>
+                <span>⏱️ Uptime: ${tlm.uptime / 10} s</span>
+            </div>
+        `;
+    }
+
+    html += '</div>';
+    return html;
 }
-function sortBeaconCards() { /* ... (Code von oben) ... */ 
+
+// === PRIVATE HELPER: UI-AKTIONEN ===
+function sortBeaconCards() {
     diagLog('Sortiere Karten nach RSSI...', 'utils');
     const cards = Array.from(beaconDisplay.children);
     cards.sort((a, b) => (+b.dataset.rssi || -1000) - (+a.dataset.rssi || -1000));
     beaconDisplay.append(...cards);
 }
-function handleStaleToggle() { /* ... (Code von oben) ... */ 
+function handleStaleToggle() {
     isStaleModeActive = staleToggle.checked;
     if (isStaleModeActive) {
         beaconDisplay.classList.add('stale-mode');
@@ -81,8 +129,9 @@ function handleStaleToggle() { /* ... (Code von oben) ... */
         beaconDisplay.classList.remove('stale-mode');
     }
 }
-// === PUBLIC API: VIEW-MANAGEMENT (Keine Änderungen) ===
-export function showView(viewName) { /* ... (Code von oben) ... */ 
+
+// === PUBLIC API: VIEW-MANAGEMENT ===
+export function showView(viewName) {
     if (viewName === 'gatt') {
         beaconView.style.display = 'none';
         gattView.style.display = 'block';
@@ -93,14 +142,14 @@ export function showView(viewName) { /* ... (Code von oben) ... */
         viewToggle.textContent = 'GATT-Ansicht (WIP)';
     }
 }
-export function showConnectingState(name) { /* ... (Code von oben) ... */ 
+export function showConnectingState(name) {
     showView('gatt');
     gattDeviceName.textContent = `Verbinde mit: ${name}...`;
     gattTreeContainer.innerHTML = '<p>Verbinde und lese Services...</p>';
 }
 
-// === PUBLIC API: GATT-RENDERING (Keine Änderungen) ===
-export function renderGattTree(gattTree, deviceName) { /* ... (Code von oben) ... */ 
+// === PUBLIC API: GATT-RENDERING ===
+export function renderGattTree(gattTree, deviceName) {
     gattDeviceName.textContent = `Verbunden mit: ${deviceName || 'Unbenannt'}`;
     gattTreeContainer.innerHTML = '';
     
@@ -170,7 +219,7 @@ export function renderGattTree(gattTree, deviceName) { /* ... (Code von oben) ..
         gattTreeContainer.appendChild(serviceEl);
     });
 }
-export function updateCharacteristicValue(charUuid, value, isNotifying = false) { /* ... (Code von oben) ... */ 
+export function updateCharacteristicValue(charUuid, value, isNotifying = false) {
     const valueEl = document.getElementById(`val-${charUuid}`);
     if (!valueEl) return;
 
@@ -207,7 +256,7 @@ export function setupUIListeners(callbacks) {
     diagLog('UI-Event-Listener erfolgreich gebunden.', 'info');
 }
 
-export function setScanStatus(isScanning) { /* ... (Code von oben) ... */ 
+export function setScanStatus(isScanning) {
     if (isScanning) {
         scanButton.disabled = true;
         scanButton.textContent = 'Scanning...';
@@ -233,19 +282,17 @@ export function updateBeaconUI(deviceId, device) {
         card.id = deviceId;
         card.className = 'beacon-card';
         
-        // ==== HIER IST DIE NEUE LOGIK ====
         if (device.isConnectable) {
-            // Gerät ist verbindungsfähig: Click-Listener hinzufügen
             card.addEventListener('click', () => {
                 if (appCallbacks.onConnect) {
                     appCallbacks.onConnect(deviceId);
                 }
             });
         } else {
-            // Gerät ist NICHT verbindungsfähig: Visuell deaktivieren
             card.classList.add('not-connectable');
         }
         
+        // HINWEIS: renderBeaconData wird jetzt die neuen Eddystone-Typen handhaben
         card.innerHTML = `
             <h3>${device.name}</h3>
             <div class="beacon-meta">
@@ -272,8 +319,12 @@ export function updateBeaconUI(deviceId, device) {
     card.dataset.rssi = device.rssi;
     card.querySelector('.distance-value').textContent = calculateDistance(device.txPower, device.rssi);
     
+    // HINWEIS: Wir müssen hier die Daten-Container aktualisieren
     const telemetryEl = card.querySelector('.beacon-telemetry');
     if (telemetryEl) telemetryEl.innerHTML = renderTelemetry(device.telemetry).trim();
+
+    const beaconDataEl = card.querySelector('.beacon-data');
+    if (beaconDataEl) beaconDataEl.innerHTML = renderBeaconData(device.beaconData).trim();
 
     const chart = chartMap.get(deviceId);
     if (chart) updateSparkline(chart, device.rssi);
@@ -281,12 +332,12 @@ export function updateBeaconUI(deviceId, device) {
     card.classList.remove('stale');
 }
 
-export function setCardStale(deviceId) { /* ... (Code von oben) ... */ 
+export function setCardStale(deviceId) {
     const card = document.getElementById(deviceId);
     if (card) card.classList.add('stale');
 }
 
-export function clearUI() { /* ... (Code von oben) ... */ 
+export function clearUI() {
     diagLog('Bereinige UI und lösche Beacon-Karten...', 'ui');
     beaconDisplay.innerHTML = '';
     chartMap.forEach(chart => chart.destroy());
