@@ -1,52 +1,36 @@
 /**
- * js/app.js (Version 6 - Mit Fehler-Trace-Route)
- * * ARCHITEKTUR-HINWEIS: Layer 4, der Orchestrator.
- * * ZWECK:
- * 1. Dient als einziger Einstiegspunkt.
- * 2. Nutzt DYNAMISCHE IMPORTE (await import()), um Lade- und
- * Syntaxfehler in Modulen abzufangen und im Diagnose-Panel
- * anzuzeigen.
- * 3. Verbindet alle Module per Dependency Inversion (Callbacks).
- * 4. Enthält [TRACE]-Logs, um den Klick-Pfad zu debuggen.
+ * js/app.js (Version 7 - Inspektor-Modell)
+ * * ARCHITEKTUR-HINWEIS:
+ * - Klick auf Karte löst 'onInspect' aus (Scan läuft weiter).
+ * - 'showInspectorView' holt Daten vom Logger und zeigt sie an.
+ * - Klick auf "Verbinden" (in Inspektor) löst 'onGattConnect' aus.
+ * - ERST HIER wird der Scan gestoppt und die GATT-Verbindung initiiert.
  */
 
-// Heartbeat für den Watchdog in index.html
+// Heartbeat
 window.__app_heartbeat = false;
 
-/**
- * Eine primitive Log-Funktion, die WÄHREND des Ladens funktioniert,
- * BEVOR der errorManager initialisiert ist.
- * @param {string} msg - Die Nachricht
- * @param {boolean} isError - Als Fehler formatieren?
- */
 function earlyDiagLog(msg, isError = false) {
     try {
         const panel = document.getElementById('diag-log-panel');
         if (panel) {
             const entry = document.createElement('span');
             entry.className = `log-entry ${isError ? 'log-error' : 'log-bootstrap'}`;
-            const timestamp = new Date().toLocaleTimeString('de-DE', { hour12: false });
-            entry.textContent = `[${timestamp}] [BOOTSTRAP]: ${msg}`;
+            entry.textContent = `[${new Date().toLocaleTimeString('de-DE')}] [BOOTSTRAP]: ${msg}`;
             panel.prepend(entry);
-        } else {
-            console.log(msg); // Fallback
-        }
+        } else { console.log(msg); }
     } catch (e) { console.error("EarlyDiagLog FAILED:", e); }
 }
 
-/**
- * Die Haupt-Initialisierungsfunktion der Anwendung.
- * Wird nach DOMContentLoaded aufgerufen.
- */
 async function initApp() {
-    // Variablen für die geladenen Modul-Funktionen
+    // Variablen für Modul-Funktionen
     let diagLog, initGlobalErrorHandler;
     let startKeepAlive, stopKeepAlive;
     let loadCompanyIDs;
-    let setupUIListeners;
+    let setupUIListeners, showInspectorView, showView; // UI-Funktionen
     let initBluetooth, startScan, stopScan, connectToDevice, disconnect,
-        readCharacteristic, startNotifications;
-    let generateLogFile; 
+        readCharacteristic, startNotifications; // Bluetooth-Funktionen
+    let getDeviceLog, generateLogFile; // Logger-Funktionen
 
     try {
         earlyDiagLog('App-Initialisierung wird gestartet (DOM content loaded)...');
@@ -56,7 +40,6 @@ async function initApp() {
         const errorModule = await import('./errorManager.js');
         diagLog = errorModule.diagLog;
         initGlobalErrorHandler = errorModule.initGlobalErrorHandler;
-        
         diagLog('Globale Error-Handler werden installiert...', 'info');
         initGlobalErrorHandler();
         
@@ -71,11 +54,15 @@ async function initApp() {
         
         diagLog('Lade Layer 1 (logger.js)...', 'utils');
         const loggerModule = await import('./logger.js');
+        getDeviceLog = loggerModule.getDeviceLog;
         generateLogFile = loggerModule.generateLogFile;
         
         diagLog('Lade Layer 2 (ui.js)...', 'utils');
         const uiModule = await import('./ui.js');
         setupUIListeners = uiModule.setupUIListeners;
+        // NEU: Wir importieren die UI-Steuerfunktionen
+        showInspectorView = uiModule.showInspectorView;
+        showView = uiModule.showView;
         
         diagLog('Lade Layer 3 (bluetooth.js)...', 'utils');
         const bluetoothModule = await import('./bluetooth.js');
@@ -91,7 +78,7 @@ async function initApp() {
 
         // --- Initialisierung ---
         diagLog('Initialisiere Bluetooth-Modul (und Logger)...', 'bt');
-        initBluetooth(); // Ruft intern initLogger() auf
+        initBluetooth(); 
         
         diagLog('Lade Company IDs...', 'utils');
         await loadCompanyIDs();
@@ -111,12 +98,35 @@ async function initApp() {
             stopKeepAlive();
         };
         
-        const connectAction = (deviceId) => {
-            // ==== [TRACE 5] ====
-            // Kommt der Klick hier an?
-            diagLog(`[TRACE] app.js: connectAction für ${deviceId.substring(0, 4)}... empfangen.`, 'bt');
+        /**
+         * NEU: Wird von ui.js aufgerufen, wenn auf eine Karte geklickt wird.
+         * Stoppt den Scan NICHT.
+         * @param {string} deviceId 
+         */
+        const inspectAction = (deviceId) => {
+            diagLog(`Aktion: Inspiziere ${deviceId.substring(0, 4)}... (Scan läuft)`, 'ui');
+            // 1. Hole geloggte Daten vom Logger
+            const deviceLog = getDeviceLog(deviceId);
+            if (deviceLog) {
+                // 2. Sage der UI, die Daten in der Inspektor-Ansicht anzuzeigen
+                showInspectorView(deviceLog);
+            } else {
+                diagLog(`FEHLER: Konnte Log-Daten für ${deviceId} nicht finden.`, 'error');
+            }
+        };
+        
+        /**
+         * NEU: Wird von ui.js aufgerufen, wenn der "Verbinden"-Button
+         * im Inspektor geklickt wird.
+         * @param {string} deviceId
+         */
+        const gattConnectAction = (deviceId) => {
+            diagLog(`Aktion: Verbinde GATT für ${deviceId.substring(0, 4)}...`, 'bt');
+            // 1. JETZT den Scan stoppen
+            stopScan();
             stopKeepAlive();
-            connectToDevice(deviceId); // Leitet an bluetooth.js weiter
+            // 2. Bluetooth-Modul anweisen, zu verbinden
+            connectToDevice(deviceId);
         };
         
         const gattDisconnectAction = () => {
@@ -139,31 +149,38 @@ async function initApp() {
             generateLogFile();
         };
 
+        const viewToggleAction = () => {
+            // Dieser Button kehrt jetzt immer zur Beacon-Ansicht zurück
+            diagLog("Aktion: Wechsle zur Beacon-Ansicht", "ui");
+            showView('beacon');
+            if (gattServer) {
+                disconnect();
+            }
+        };
+
         // --- UI-Listener mit Callbacks verbinden ---
         setupUIListeners({
             onScan: scanAction,
             onStopScan: stopScanAction,
-            onConnect: connectAction,
+            onInspect: inspectAction,           // NEU (Klick auf Karte)
+            onGattConnect: gattConnectAction,   // NEU (Klick auf "Verbinden")
             onGattDisconnect: gattDisconnectAction,
+            onViewToggle: viewToggleAction,   // NEU (Klick auf "Beacon-Ansicht")
             onRead: readAction,
             onNotify: notifyAction,
             onDownload: downloadAction,
-            onSort: () => {}, // Wird von ui.js intern gehandhabt
-            onStaleToggle: () => {} // Wird von ui.js intern gehandhabt
+            onSort: () => {}, 
+            onStaleToggle: () => {} 
         });
         
         diagLog('BeaconBay ist initialisiert und bereit.', 'info');
-
-        // ===== 7. HERZSCHLAG SETZEN (WICHTIG) =====
         window.__app_heartbeat = true;
 
     } catch (err) {
-        // Fängt Lade- oder Initialisierungsfehler ab
         const errorMsg = `FATALER APP-LADEFEHLER: ${err.message}.`;
         earlyDiagLog(errorMsg, true);
         console.error(errorMsg, err);
     }
 }
 
-// ===== 8. Anwendung starten =====
 window.addEventListener('DOMContentLoaded', initApp);
