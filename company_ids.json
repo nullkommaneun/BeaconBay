@@ -1,6 +1,20 @@
 {
   "0x004C": "Apple, Inc.",
   "0x0499": "Ruuvi Innovations Ltd.",
+  "0x0006": "Microsoft",
+  
+  "__comment_industrial": "--- Industrielle Chip-Hersteller ---",
   "0x0059": "Nordic Semiconductor ASA",
-  "0x0006": "Microsoft"
+  "0x000D": "Texas Instruments",
+  "0x001B": "Silicon Labs",
+  "0x02D7": "Espressif Inc.",
+  "0x000A": "Intel Corp.",
+  "0x000E": "Qualcomm",
+
+  "__comment_automation": "--- Industrie & Automation (VW-Umfeld) ---",
+  "0x006E": "Siemens AG",
+  "0x0138": "Robert Bosch GmbH",
+  "0x0555": "KUKA AG",
+  "0x04D6": "Phoenix Contact",
+  "0x027A": "Murata Manufacturing Co., Ltd."
 }
