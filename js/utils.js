@@ -332,4 +332,22 @@ export function calculateDistance(txPower, rssi) {
         return 'N/A (Berechnungsfehler)';
     }
 }
+
+/**
+ * V10 NEU: Konvertiert einen Hex-String (z.B. "0x01" oder "FF0A")
+ * in einen ArrayBuffer, den die Web Bluetooth API benötigt.
+ * @param {string} hex - Der Hex-String.
+ * @returns {ArrayBuffer}
+ */
+export function hexStringToArrayBuffer(hex) {
+    hex = hex.replace(/^0x/, ''); // '0x' am Anfang entfernen
+    if (hex.length % 2 !== 0) {
+        throw new Error('Ungültige Hex-String-Länge.');
+    }
+    const buffer = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+        buffer[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+    }
+    return buffer.buffer;
+}
  
