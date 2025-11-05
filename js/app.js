@@ -1,10 +1,10 @@
 /**
- * js/app.js (Version 9.9 - "Ultimate Stability" Patch)
+ * js/app.js (Version 9.11 - "Filtered Handshake" Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - Übergibt einen 'onGattDisconnected'-Callback an bluetooth.js.
- * - Dieser Callback (gattUnexpectedDisconnectAction) startet den Scan neu,
- * wenn die Verbindung unerwartet abbricht (z.B. Gerät geht außer Reichweite).
- * - Die App kehrt jetzt IMMER in einen stabilen Scan-Zustand zurück.
+ * - Kombiniert die V9.8-Stabilität (stopScan() zuerst)
+ * mit der V9.7-Filterung (Namensfilter).
+ * - gattConnectAction stoppt den Scan und ruft dann
+ * requestDeviceForHandshake(deviceId) auf.
  */
 
 // Heartbeat
@@ -104,14 +104,20 @@ async function initApp() {
             }
         };
         
+        /**
+         * V9.11 PATCH: Führt V9.8 (stopScan zuerst) und V9.7 (Filter) zusammen.
+         */
         const gattConnectAction = async (deviceId) => {
-            diagLog(`Aktion: GATT-Handshake (ohne Filter) anfordern...`, 'bt');
+            diagLog(`Aktion: GATT-Handshake (MIT Filter) für ${deviceId.substring(0, 4)}... anfordern`, 'bt');
             
+            // 1. ZUERST unseren Scan stoppen, um Adapter freizugeben
             stopScan();
             stopKeepAlive();
             
-            const authorizedDevice = await requestDeviceForHandshake();
+            // 2. Handshake anfordern (startet Browser-internen Scan mit Filter)
+            const authorizedDevice = await requestDeviceForHandshake(deviceId);
             
+            // 3. Prüfen, ob Handshake erfolgreich war (Benutzer hat Pop-up bestätigt)
             if (!authorizedDevice) {
                 diagLog('Handshake vom Benutzer abgelehnt oder fehlgeschlagen. Starte Scan neu...', 'bt');
                 setGattConnectingUI(false, 'Handshake abgelehnt');
@@ -119,9 +125,13 @@ async function initApp() {
                 return; 
             }
         
+            // 4. Handshake ERFOLGREICH.
             diagLog(`Handshake erfolgreich für ${authorizedDevice.name}. Verbinde...`, 'bt');
+            
+            // 5. Mit dem autorisierten Gerät verbinden
             const success = await connectWithAuthorizedDevice(authorizedDevice);
             
+            // 6. Fallback (falls Verbindung TROTZ Handshake fehlschlägt)
             if (!success) {
                 diagLog('Verbindung trotz Handshake fehlgeschlagen. Starte Scan neu...', 'bt');
                 scanAction(); 
@@ -133,13 +143,8 @@ async function initApp() {
             disconnect();
         };
         
-        /**
-         * V9.9 NEU: Dieser Callback wird von bluetooth.js aufgerufen,
-         * wenn die Verbindung *unerwartet* abbricht (z.B. Gerät außer Reichweite).
-         */
         const gattUnexpectedDisconnectAction = () => {
             diagLog('Unerwartete Trennung (onGattDisconnect). Starte Scan neu...', 'bt');
-            // Einfach scanAction aufrufen, um die App zurückzusetzen.
             scanAction();
         };
 
@@ -166,9 +171,6 @@ async function initApp() {
         
         // --- Initialisierung ---
         diagLog('Initialisiere Bluetooth-Modul (und Logger)...', 'bt');
-        /**
-         * V9.9 PATCH: Übergibt den neuen Callback an den Treiber
-         */
         initBluetooth({
             onGattDisconnected: gattUnexpectedDisconnectAction
         }); 
@@ -176,14 +178,13 @@ async function initApp() {
         diagLog('Lade Company IDs...', 'utils');
         await loadCompanyIDs();
 
-
         // --- UI-Listener mit Callbacks verbinden ---
         setupUIListeners({
             onScan: scanAction,
             onStopScan: stopScanAction,
             onInspect: inspectAction,
             onGattConnect: gattConnectAction,
-            onGattDisconnect: gattDisconnectAction, // Dies ist der *gewollte* Disconnect (Button-Klick)
+            onGattDisconnect: gattDisconnectAction,
             onViewToggle: viewToggleAction,
             onRead: readAction,
             onNotify: notifyAction,
@@ -204,4 +205,3 @@ async function initApp() {
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
- 
