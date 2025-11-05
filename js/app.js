@@ -1,15 +1,17 @@
 /**
- * js/app.js (Version 2 - Selbst-diagnostizierend)
+ * js/app.js (Version 3 - Selbst-diagnostizierend & GATT-fähig)
  * * ARCHITEKTUR-HINWEIS: Dies ist der Orchestrator (Layer 4).
+ * * ABHÄNGIGKEITEN: Alle Module (dynamisch geladen).
  * * ZWECK:
- * 1. Dient als Einstiegspunkt.
+ * 1. Dient als einziger Einstiegspunkt.
  * 2. Nutzt DYNAMISCHE IMPORTE (await import()), um Lade- und
  * Syntaxfehler in Modulen abzufangen und im Diagnose-Panel
- * anzuzeigen. Dies löst das "Blinde-Fleck"-Problem von window.onerror.
+ * anzuzeigen.
+ * 3. Verbindet alle Module per Dependency Inversion (Callbacks).
  */
 
-// Heartbeat für den Watchdog setzen
-window.__app_heartheartbeat = false;
+// Heartbeat für den Watchdog in index.html
+window.__app_heartbeat = false;
 
 /**
  * Eine primitive Log-Funktion, die WÄHREND des Ladens funktioniert,
@@ -22,44 +24,40 @@ function earlyDiagLog(msg, isError = false) {
         const panel = document.getElementById('diag-log-panel');
         if (panel) {
             const entry = document.createElement('span');
-            const level = isError ? 'log-error' : 'log-info';
-            entry.className = `log-entry ${level}`;
+            entry.className = `log-entry ${isError ? 'log-error' : 'log-bootstrap'}`;
             const timestamp = new Date().toLocaleTimeString('de-DE', { hour12: false });
             entry.textContent = `[${timestamp}] [BOOTSTRAP]: ${msg}`;
             panel.prepend(entry);
         } else {
             console.log(msg); // Fallback
         }
-    } catch (e) {
-        console.error("EarlyDiagLog FAILED:", e);
-    }
+    } catch (e) { console.error("EarlyDiagLog FAILED:", e); }
 }
 
 /**
  * Die Haupt-Initialisierungsfunktion der Anwendung.
+ * Wird nach DOMContentLoaded aufgerufen.
  */
 async function initApp() {
+    // Variablen für die geladenen Modul-Funktionen
     let diagLog, initGlobalErrorHandler;
     let startKeepAlive, stopKeepAlive;
     let loadCompanyIDs;
-    let setupUIListeners, sortBeaconCards, setStaleMode;
-    let initBluetooth, startScan, stopScan;
+    let setupUIListeners;
+    let initBluetooth, startScan, stopScan, connectToDevice, disconnect;
 
     try {
         earlyDiagLog('App-Initialisierung wird gestartet (DOM content loaded)...');
         
         // ===== 4. MODULE DYNAMISCH LADEN (Fehlerabfang) =====
-        // WIE: Jeder 'await import' wird einzeln ausgeführt.
-        // Wenn einer fehlschlägt (404, Syntaxfehler), springt
-        // der Code direkt in den 'catch'-Block und sagt uns,
-        // welche Datei das Problem verursacht hat.
+        // WIE: Jeder 'await import' ist ein Promise. Schlägt er fehl
+        // (404, Syntaxfehler), springt der Code in den catch-Block.
         
         earlyDiagLog('Lade Layer 0 (errorManager.js)...');
         const errorModule = await import('./errorManager.js');
         diagLog = errorModule.diagLog;
         initGlobalErrorHandler = errorModule.initGlobalErrorHandler;
         
-        // Ab jetzt verwenden wir den echten diagLog
         diagLog('Globale Error-Handler werden installiert...', 'info');
         initGlobalErrorHandler();
         
@@ -75,15 +73,14 @@ async function initApp() {
         diagLog('Lade Layer 2 (ui.js)...', 'utils');
         const uiModule = await import('./ui.js');
         setupUIListeners = uiModule.setupUIListeners;
-        // (Diese sind jetzt intern in ui.js, aber wir importieren sie zur Sicherheit)
-        sortBeaconCards = uiModule.sortBeaconCards; 
-        setStaleMode = uiModule.setStaleMode;
         
         diagLog('Lade Layer 3 (bluetooth.js)...', 'utils');
         const bluetoothModule = await import('./bluetooth.js');
         initBluetooth = bluetoothModule.initBluetooth;
         startScan = bluetoothModule.startScan;
         stopScan = bluetoothModule.stopScan;
+        connectToDevice = bluetoothModule.connectToDevice;
+        disconnect = bluetoothModule.disconnect;
 
         diagLog('Alle Module erfolgreich geladen.', 'info');
 
@@ -99,52 +96,64 @@ async function initApp() {
         // ===== 6. Module verbinden (Dependency Inversion) =====
         diagLog('Verbinde UI-Listener...', 'info');
 
+        // Definition der Aktionen, die passieren, wenn die UI Events meldet.
+        // Das UI-Modul ist "dumm" und weiß nichts von diesen Aktionen.
+
         const scanAction = () => {
             diagLog("Aktion: Scan gestartet (via app.js)", "bt");
-            startKeepAlive();
-            startScan();
+            startKeepAlive(); // Sagt browser.js, aktiv zu bleiben
+            startScan();      // Sagt bluetooth.js, zu scannen
         };
 
-        const disconnectAction = () => {
+        const stopScanAction = () => {
             diagLog("Aktion: Scan gestoppt (via app.js)", "bt");
             stopScan();
             stopKeepAlive();
         };
-
-        const sortAction = () => {
-            diagLog("Aktion: UI Sortierung (via app.js)", "utils");
-            // (ui.js handhabt dies jetzt intern)
-        };
-
-        const staleToggleAction = (isChecked) => {
-            diagLog(`Aktion: Stale-Modus ${isChecked ? 'an' : 'aus'} (via app.js)`, 'utils');
-            // (ui.js handhabt dies jetzt intern)
+        
+        /**
+         * Wird von ui.js aufgerufen, wenn auf eine Karte geklickt wird.
+         * @param {string} deviceId 
+         */
+        const connectAction = (deviceId) => {
+            diagLog(`Aktion: Verbinde mit ${deviceId} (via app.js)`, 'bt');
+            stopKeepAlive(); // Im GATT-Modus nicht nötig
+            connectToDevice(deviceId); // Sagt bluetooth.js, zu verbinden
         };
         
+        /**
+         * Wird von ui.js aufgerufen (GATT Disconnect Button).
+         */
+        const gattDisconnectAction = () => {
+            diagLog('Aktion: Trenne GATT-Verbindung (via app.js)', 'bt');
+            disconnect(); // Sagt bluetooth.js, zu trennen
+        };
+        
+        // Übergebe das Bündel von Aktionen an das UI-Modul.
         setupUIListeners({
             onScan: scanAction,
-            onDisconnect: disconnectAction,
-            onSort: sortAction,
-            onStaleToggle: staleToggleAction
+            onStopScan: stopScanAction,
+            onConnect: connectAction,
+            onGattDisconnect: gattDisconnectAction,
+            onSort: () => {}, // Wird von ui.js intern gehandhabt
+            onStaleToggle: () => {} // Wird von ui.js intern gehandhabt
         });
         
         diagLog('BeaconBay ist initialisiert und bereit.', 'info');
 
         // ===== 7. HERZSCHLAG SETZEN (WICHTIG) =====
+        // Signal an den Watchdog in index.html, dass alles gut gelaufen ist.
         window.__app_heartbeat = true;
 
     } catch (err) {
         // ===== DER WICHTIGSTE BLOCK =====
-        // HIER landen alle 404-Fehler, Syntaxfehler und Import-Fehler.
-        const errorMsg = `FATALER APP-LADEFEHLER: ${err.message}. Prüfen Sie die Datei, die gerade geladen wurde (siehe Log oben). Es ist wahrscheinlich ein Syntaxfehler oder ein Tippfehler beim Import/Export.`;
+        // Fängt 404-Fehler, Syntaxfehler und Import-Fehler.
+        const errorMsg = `FATALER APP-LADEFEHLER: ${err.message}. Prüfen Sie die Datei, die gerade geladen wurde (siehe Log oben).`;
         earlyDiagLog(errorMsg, true); // Log mit unserer Fallback-Funktion
-        
-        // (Wir loggen auch in der Konsole, falls das Panel selbst versagt)
-        console.error(errorMsg);
-        console.error(err);
+        console.error(errorMsg, err);
     }
 }
 
 // ===== 8. Anwendung starten =====
 window.addEventListener('DOMContentLoaded', initApp);
-
+ 
