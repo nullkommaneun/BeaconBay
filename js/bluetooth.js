@@ -1,13 +1,13 @@
 /**
- * js/bluetooth.js (Version 6.1 - Vollständig, keine Platzhalter)
- * * ARCHITEKTUR-HINWEIS:
- * - Integriert den Logger.
- * - Enthält alle voll funktionsfähigen GATT- und Scan-Methoden.
+ * js/bluetooth.js (Version 6.2 - Korrigiert 'connectable')
+ * * ARCHITEKTUR-HINWEIS: Layer 3 Modul.
+ * * KORREKTUR (V6.2):
+ * - Greift jetzt korrekt auf 'event.device.connectable' statt 'event.connectable' zu.
+ * - Übergibt den korrekten Wert an die UI und den Logger.
  */
 
 import { diagLog } from './errorManager.js';
 import { parseAdvertisementData } from './utils.js';
-// Logger importieren
 import { logAdvertisement, setScanStart, init as initLogger } from './logger.js';
 import { 
     setScanStatus, 
@@ -33,17 +33,26 @@ const STALE_CHECK_INTERVAL_MS = 2000;
 
 // === PRIVATE HELPER: SCANNING ===
 
+/**
+ * Callback für 'advertisementreceived'.
+ * @param {Event} event - Das Advertisement-Event.
+ */
 function handleAdvertisement(event) {
     try {
-        // 1. Logger füttern
-        // Wir übergeben das ROHE Event an den Logger.
+        // 1. Logger füttern (Logger V3 greift intern korrekt zu)
         logAdvertisement(event);
         
         // 2. Daten für die Echtzeit-UI parsen
-        const { device, connectable } = event;
+        const { device } = event;
+        
+        // ==== HIER IST DIE KORREKTUR ====
+        // Das Flag 'connectable' ist eine Eigenschaft von 'device', nicht von 'event'.
+        const { connectable } = device; 
+
         const parsedData = parseAdvertisementData(event);
         if (!parsedData) return; 
         
+        // Korrekten Wert an das geparste Objekt für die UI anhängen
         parsedData.isConnectable = connectable;
         
         deviceMap.set(device.id, {
@@ -122,10 +131,6 @@ export async function startScan() {
     }
 }
 
-/**
- * Stoppt den Web Bluetooth LE Scan.
- * (Dies ist die Funktion, die vorher gefehlt hat)
- */
 export function stopScan() {
     navigator.bluetooth.removeEventListener('advertisementreceived', handleAdvertisement);
 
@@ -144,14 +149,10 @@ export function stopScan() {
         staleCheckInterval = null;
     }
     
-    // WICHTIG: UI-Status zurücksetzen
     setScanStatus(false);
     diagLog('Scan-Ressourcen bereinigt.', 'bt');
 }
 
-/**
- * Trennt die aktive GATT-Verbindung.
- */
 export function disconnect() {
     if (!gattServer) return;
     gattServer.disconnect(); // Löst onGattDisconnect via Event aus
@@ -159,9 +160,6 @@ export function disconnect() {
 
 // === PUBLIC API: GATT INTERACTION ===
 
-/**
- * Verbindet sich mit einem Gerät über dessen ID.
- */
 export async function connectToDevice(deviceId) {
     const deviceData = deviceMap.get(deviceId);
     if (!deviceData) return diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
@@ -211,9 +209,6 @@ export async function connectToDevice(deviceId) {
     }
 }
 
-/**
- * Liest einen Wert von einer Characteristic.
- */
 export async function readCharacteristic(charUuid) {
     const char = gattCharacteristicMap.get(charUuid);
     if (!char || !char.properties.read) {
@@ -229,9 +224,6 @@ export async function readCharacteristic(charUuid) {
     }
 }
 
-/**
- * Startet Notifications für eine Characteristic.
- */
 export async function startNotifications(charUuid) {
     const char = gattCharacteristicMap.get(charUuid);
     if (!char || !char.properties.notify) {
