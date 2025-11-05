@@ -1,25 +1,45 @@
 /**
- * js/app.js (Version 5 - Mit Logger-Integration)
+ * js/app.js (Version 6 - Korrigierte Callbacks)
  * * ARCHITEKTUR-HINWEIS:
- * - Importiert das neue 'logger.js'-Modul dynamisch.
- * - Definiert den 'onDownload'-Callback.
- * - Übergibt den Callback an setupUIListeners.
+ * - Behebt den Fehler der leeren Callback-Funktionen (scanAction, etc.)
+ * aus der vorherigen Version.
  */
 
 // Heartbeat
 window.__app_heartbeat = false;
 
-function earlyDiagLog(msg, isError = false) { /* ... (Keine Änderung) ... */ }
+/**
+ * Primitive Log-Funktion, die WÄHREND des Ladens funktioniert,
+ * BEVOR der errorManager initialisiert ist.
+ * @param {string} msg - Die Nachricht
+ * @param {boolean} isError - Als Fehler formatieren?
+ */
+function earlyDiagLog(msg, isError = false) {
+    try {
+        const panel = document.getElementById('diag-log-panel');
+        if (panel) {
+            const entry = document.createElement('span');
+            entry.className = `log-entry ${isError ? 'log-error' : 'log-bootstrap'}`;
+            const timestamp = new Date().toLocaleTimeString('de-DE', { hour12: false });
+            entry.textContent = `[${timestamp}] [BOOTSTRAP]: ${msg}`;
+            panel.prepend(entry);
+        } else {
+            console.log(msg); // Fallback
+        }
+    } catch (e) { console.error("EarlyDiagLog FAILED:", e); }
+}
 
+/**
+ * Die Haupt-Initialisierungsfunktion der Anwendung.
+ */
 async function initApp() {
-    // Variablen für Modul-Funktionen
+    // Variablen für die geladenen Modul-Funktionen
     let diagLog, initGlobalErrorHandler;
     let startKeepAlive, stopKeepAlive;
     let loadCompanyIDs;
     let setupUIListeners;
     let initBluetooth, startScan, stopScan, connectToDevice, disconnect,
         readCharacteristic, startNotifications;
-    // NEU: Logger-Funktion
     let generateLogFile; 
 
     try {
@@ -42,11 +62,9 @@ async function initApp() {
         const utilsModule = await import('./utils.js');
         loadCompanyIDs = utilsModule.loadCompanyIDs;
         
-        // NEU: Lade Layer 1 (logger.js)
         diagLog('Lade Layer 1 (logger.js)...', 'utils');
         const loggerModule = await import('./logger.js');
         generateLogFile = loggerModule.generateLogFile;
-        // initLogger() wird von bluetooth.js aufgerufen, um Timing-Konflikte zu vermeiden
         
         diagLog('Lade Layer 2 (ui.js)...', 'utils');
         const uiModule = await import('./ui.js');
@@ -66,8 +84,7 @@ async function initApp() {
 
         // --- Initialisierung ---
         diagLog('Initialisiere Bluetooth-Modul (und Logger)...', 'bt');
-        // WICHTIG: initBluetooth() ruft jetzt intern initLogger() auf
-        initBluetooth(); 
+        initBluetooth(); // Ruft intern initLogger() auf
         
         diagLog('Lade Company IDs...', 'utils');
         await loadCompanyIDs();
@@ -75,14 +92,42 @@ async function initApp() {
         // --- Callbacks definieren (Dependency Inversion) ---
         diagLog('Verbinde UI-Listener...', 'info');
 
-        const scanAction = () => { /* ... (Keine Änderung) ... */ };
-        const stopScanAction = () => { /* ... (Keine Änderung) ... */ };
-        const connectAction = (deviceId) => { /* ... (Keine Änderung) ... */ };
-        const gattDisconnectAction = () => { /* ... (Keine Änderung) ... */ };
-        const readAction = (charUuid) => { /* ... (Keine Änderung) ... */ };
-        const notifyAction = (charUuid) => { /* ... (Keine Änderung) ... */ };
+        // ==== HIER IST DER KORRIGIERTE CODE ====
+        // Diese Funktionen sind jetzt mit Logik gefüllt.
+
+        const scanAction = () => {
+            diagLog("Aktion: Scan gestartet (via app.js)", "bt");
+            startKeepAlive(); // Sagt browser.js, aktiv zu bleiben
+            startScan();      // Sagt bluetooth.js, zu scannen
+        };
+
+        const stopScanAction = () => {
+            diagLog("Aktion: Scan gestoppt (via app.js)", "bt");
+            stopScan();
+            stopKeepAlive();
+        };
         
-        // NEU: Download-Callback
+        const connectAction = (deviceId) => {
+            diagLog(`Aktion: Verbinde mit ${deviceId} (via app.js)`, 'bt');
+            stopKeepAlive(); // Im GATT-Modus nicht nötig
+            connectToDevice(deviceId); // Sagt bluetooth.js, zu verbinden
+        };
+        
+        const gattDisconnectAction = () => {
+            diagLog('Aktion: Trenne GATT-Verbindung (via app.js)', 'bt');
+            disconnect(); // Sagt bluetooth.js, zu trennen
+        };
+
+        const readAction = (charUuid) => {
+            diagLog(`Aktion: Lese Wert von ${charUuid}`, 'bt');
+            readCharacteristic(charUuid);
+        };
+        
+        const notifyAction = (charUuid) => {
+            diagLog(`Aktion: Abonniere ${charUuid}`, 'bt');
+            startNotifications(charUuid);
+        };
+        
         const downloadAction = () => {
             diagLog("Aktion: Download Log (via app.js)", "utils");
             generateLogFile(); // Sagt logger.js, die Datei zu erstellen
@@ -96,15 +141,16 @@ async function initApp() {
             onGattDisconnect: gattDisconnectAction,
             onRead: readAction,
             onNotify: notifyAction,
-            onDownload: downloadAction, // NEU
-            onSort: () => {},
-            onStaleToggle: () => {}
+            onDownload: downloadAction,
+            onSort: () => {}, // Wird von ui.js intern gehandhabt
+            onStaleToggle: () => {} // Wird von ui.js intern gehandhabt
         });
         
         diagLog('BeaconBay ist initialisiert und bereit.', 'info');
         window.__app_heartbeat = true;
 
     } catch (err) {
+        // Fängt Lade- oder Initialisierungsfehler ab
         const errorMsg = `FATALER APP-LADEFEHLER: ${err.message}.`;
         earlyDiagLog(errorMsg, true);
         console.error(errorMsg, err);
