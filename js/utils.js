@@ -1,24 +1,55 @@
 /**
- * js/utils.js (Version 3 - Mit Eddystone-Parser)
+ * js/utils.js (Version 4 - Mit "Known Services"-Wissen)
  * * ARCHITEKTUR-HINWEIS:
- * - parseAdvertisementData prüft jetzt auch event.serviceData.
- * - Fügt parseEddystone() hinzu, um Eddystone-UID, -URL und -TLM
- * (Telemetry) Frames zu parsen.
+ * - Fügt Dictionaries (Maps) für bekannte Services/Characteristics hinzu.
+ * - Fügt einen intelligenten 'decodeKnownCharacteristic'-Dispatcher hinzu.
  */
 
 import { diagLog } from './errorManager.js';
 
 // === MODULE STATE ===
 const companyIdMap = new Map();
-// NEU: TextDecoder für Eddystone-URL
 const utf8Decoder = new TextDecoder('utf-8');
 
-// === HILFSFUNKTIONEN (am Anfang für die Parser) ===
+// === NEU: WISSENSDATENBANK (GATT) ===
+
+/**
+ * Ein "Wörterbuch" für offiziell zugewiesene Service-UUIDs.
+ * @type {Map<string, string>}
+ */
+export const KNOWN_SERVICES = new Map([
+    ['0x1800', 'Generic Access'],
+    ['0x1801', 'Generic Attribute'],
+    ['0x180a', 'Device Information'],
+    ['0x180f', 'Battery Service']
+]);
+
+/**
+ * Ein "Wörterbuch" für offiziell zugewiesene Characteristic-UUIDs.
+ * @type {Map<string, string>}
+ */
+export const KNOWN_CHARACTERISTICS = new Map([
+    // Generic Access
+    ['0x2a00', 'Device Name'],
+    ['0x2a01', 'Appearance'],
+    // Device Information
+    ['0x2a29', 'Manufacturer Name String'],
+    ['0x2a24', 'Model Number String'],
+    ['0x2a25', 'Serial Number String'],
+    ['0x2a27', 'Hardware Revision String'],
+    ['0x2a26', 'Firmware Revision String'],
+    ['0x2a28', 'Software Revision String'],
+    // Battery Service
+    ['0x2a19', 'Battery Level']
+]);
+
+
+// === HILFSFUNKTIONEN (Parsing & Decoding) ===
 
 /**
  * Wandelt ein DataView-Objekt in einen Hexadezimal-String um.
  * @param {DataView} dataView - Die vom Gerät gelesenen Rohdaten.
- * @returns {string} Ein formatierter Hex-String (z.B. "0xDE 0xAD 0xBE 0xEF").
+ * @returns {string} Ein formatierter Hex-String (z.B. "0xDE 0xAD").
  */
 export function dataViewToHex(dataView) {
     if (!dataView) return "N/A";
@@ -41,6 +72,36 @@ export function dataViewToText(dataView) {
         return utf8Decoder.decode(dataView);
     } catch (e) {
         return dataViewToHex(dataView); // Fallback
+    }
+}
+
+/**
+ * NEU: Intelligenter Dekodierer für GATT-Werte.
+ * Weiß, wie man Standard-Characteristics (z.B. Batterie vs. Text) behandelt.
+ * @param {string} charUuid - Die UUID der Characteristic (z.B. '0x2a19').
+ * @param {DataView} dataView - Der Rohwert.
+ * @returns {string} Der dekodierte, formatierte Wert.
+ */
+export function decodeKnownCharacteristic(charUuid, dataView) {
+    switch (charUuid) {
+        // === Text-basierte Werte ===
+        case '0x2a00': // Device Name
+        case '0x2a29': // Manufacturer Name String
+        case '0x2a24': // Model Number String
+        case '0x2a25': // Serial Number String
+        case '0x2a27': // Hardware Revision String
+        case '0x2a26': // Firmware Revision String
+        case '0x2a28': // Software Revision String
+            return dataViewToText(dataView);
+
+        // === Numerische Werte ===
+        case '0x2a19': // Battery Level
+            // WIE: Liest 1 Byte (Uint8) und hängt "%" an.
+            return dataView.getUint8(0) + ' %';
+        
+        // === Fallback ===
+        default:
+            return dataViewToHex(dataView);
     }
 }
 
@@ -78,13 +139,8 @@ export async function loadCompanyIDs() {
     }
 }
 
-// === PUBLIC API: DATA PARSING ===
+// === PUBLIC API: DATA PARSING (unverändert) ===
 
-/**
- * Der Haupt-Dispatcher für das Parsen von Advertisement-Daten.
- * @param {Event} event - Das 'advertisementreceived' Event-Objekt.
- * @returns {object | null} Ein strukturiertes Objekt mit den geparsten Daten.
- */
 export function parseAdvertisementData(event) {
     const { device, rssi, txPower: browserTxPower, serviceData } = event; 
     const name = device.name || '[Unbenannt]';
@@ -94,20 +150,19 @@ export function parseAdvertisementData(event) {
     let beaconData = {};
     let parsedTxPower = browserTxPower; 
 
-    // --- PARSE-LOGIK 1: Manufacturer Data (iBeacon, Ruuvi, etc.) ---
     const manufacturerData = event.manufacturerData;
     if (manufacturerData && manufacturerData.size > 0) {
         const [companyId, dataView] = manufacturerData.entries().next().value;
         company = companyIdMap.get(companyId) || `Unbek. ID (0x${companyId.toString(16)})`;
 
-        if (companyId === 0x004C) { // Apple
+        if (companyId === 0x004C) {
             const iBeacon = parseAppleIBeacon(dataView);
             if (iBeacon) {
                 type = 'iBeacon';
                 beaconData = iBeacon;
                 parsedTxPower = iBeacon.txPower;
             }
-        } else if (companyId === 0x0499) { // Ruuvi
+        } else if (companyId === 0x0499) {
             const ruuvi = parseRuuviTag(dataView);
             if (ruuvi) {
                 type = 'RuuviTag (DF5)';
@@ -119,128 +174,22 @@ export function parseAdvertisementData(event) {
         }
     }
     
-    // --- PARSE-LOGIK 2: Service Data (Eddystone) ---
-    // WIE: Eddystone sendet unter der Service UUID 0xFEAA.
     if (serviceData && serviceData.has(0xfeaa)) {
         const eddystoneData = parseEddystone(serviceData.get(0xfeaa), rssi);
         if (eddystoneData) {
-            type = eddystoneData.type; // z.B. "Eddystone-URL"
+            type = eddystoneData.type;
             beaconData = { ...beaconData, ...eddystoneData.data };
             if (eddystoneData.txPower) parsedTxPower = eddystoneData.txPower;
-            company = "Google (Eddystone)"; // Überschreibt ggf. "Unbekannt"
+            company = "Google (Eddystone)";
         }
     }
 
     return {
-        id: device.id,
-        name,
-        company,
-        type,
-        rssi,
-        txPower: parsedTxPower,
-        telemetry,
-        beaconData,
+        id: device.id, name, company, type, rssi,
+        txPower: parsedTxPower, telemetry, beaconData,
         lastSeen: Date.now(),
-        // Das 'isConnectable' Flag wird von bluetooth.js hinzugefügt!
     };
 }
-
-/**
- * Parst Eddystone-Daten (Service UUID 0xFEAA).
- * @param {DataView} dataView - Die Rohdaten von 'serviceData'.
- * @param {number} rssi - Der aktuelle RSSI (nur für TLM-Kalkulation nötig).
- * @returns {object | null} Gep_arste Eddystone-Daten oder null.
- */
-function parseEddystone(dataView, rssi) {
-    try {
-        const frameType = dataView.getUint8(0);
-        let txPower = dataView.getInt8(1); // UID und URL haben TxPower an Byte 1
-
-        switch (frameType) {
-            // === Frame-Typ 0x00: Eddystone-UID ===
-            case 0x00:
-                // 16 Bytes (10 NS, 6 ID) + 2 RFU-Bytes
-                if (dataView.byteLength < 18) return null;
-                return {
-                    type: 'Eddystone-UID',
-                    txPower: txPower,
-                    data: {
-                        uid: bytesToEddystoneUid(new DataView(dataView.buffer, dataView.byteOffset + 2, 16))
-                    }
-                };
-
-            // === Frame-Typ 0x10: Eddystone-URL ===
-            case 0x10:
-                if (dataView.byteLength < 4) return null;
-                const urlDataView = new DataView(dataView.buffer, dataView.byteOffset + 2);
-                return {
-                    type: 'Eddystone-URL',
-                    txPower: txPower,
-                    data: {
-                        url: decodeEddystoneUrl(urlDataView)
-                    }
-                };
-                
-            // === Frame-Typ 0x20: Eddystone-TLM (Telemetry) ===
-            case 0x20:
-                if (dataView.byteLength < 14) return null;
-                // TLM (unverschlüsselt)
-                return {
-                    type: 'Eddystone-TLM',
-                    txPower: null, // TLM hat keine TxPower in diesem Frame
-                    data: {
-                        telemetry: {
-                            voltage: dataView.getUint16(2, false), // mV
-                            temperature: dataView.getFloat32(4, false), // Grad Celsius
-                            advCount: dataView.getUint32(8, false),
-                            uptime: dataView.getUint32(12, false) // 0.1s Einheiten
-                        }
-                    }
-                };
-                
-            default:
-                diagLog(`Unbekannter Eddystone Frame-Typ: 0x${frameType.toString(16)}`, 'utils');
-                return null;
-        }
-    } catch (err) {
-        diagLog(`Fehler beim Parsen von Eddystone: ${err.message}`, 'error');
-        return null;
-    }
-}
-
-/**
- * Decodiert die komprimierte URL aus einem Eddystone-URL-Frame.
- * @param {DataView} dataView - Das DataView, das *ab Byte 2* des Frames beginnt.
- * @returns {string} Die vollständige URL.
- */
-function decodeEddystoneUrl(dataView) {
-    const prefixScheme = [
-        "http://www.", "https://www.", "http://", "https://"
-    ];
-    const tldEncoding = [
-        ".com/", ".org/", ".edu/", ".net/", ".info/", ".biz/", ".gov/",
-        ".com", ".org", ".edu", ".net", ".info", ".biz", ".gov"
-    ];
-
-    let url = "";
-    const scheme = dataView.getUint8(0); // URL-Schema-Präfix
-    if (scheme < prefixScheme.length) {
-        url += prefixScheme[scheme];
-    }
-
-    for (let i = 1; i < dataView.byteLength; i++) {
-        const code = dataView.getUint8(i);
-        if (code < tldEncoding.length) {
-            url += tldEncoding[code]; // TLD-Erweiterung
-        } else {
-            url += String.fromCharCode(code); // Normales Zeichen
-        }
-    }
-    return url;
-}
-
-
-// --- Parser für iBeacon und Ruuvi (unverändert) ---
 
 function parseAppleIBeacon(dataView) {
     try {
@@ -300,7 +249,70 @@ function parseRuuviTag(dataView) {
     }
 }
 
-// --- Robuste Distanzberechnung (unverändert) ---
+function parseEddystone(dataView, rssi) {
+    try {
+        const frameType = dataView.getUint8(0);
+        let txPower = dataView.getInt8(1); 
+
+        switch (frameType) {
+            case 0x00: // Eddystone-UID
+                if (dataView.byteLength < 18) return null;
+                return {
+                    type: 'Eddystone-UID', txPower: txPower,
+                    data: { uid: bytesToEddystoneUid(new DataView(dataView.buffer, dataView.byteOffset + 2, 16)) }
+                };
+            case 0x10: // Eddystone-URL
+                if (dataView.byteLength < 4) return null;
+                const urlDataView = new DataView(dataView.buffer, dataView.byteOffset + 2);
+                return {
+                    type: 'Eddystone-URL', txPower: txPower,
+                    data: { url: decodeEddystoneUrl(urlDataView) }
+                };
+            case 0x20: // Eddystone-TLM
+                if (dataView.byteLength < 14) return null;
+                return {
+                    type: 'Eddystone-TLM', txPower: null,
+                    data: {
+                        telemetry: {
+                            voltage: dataView.getUint16(2, false),
+                            temperature: dataView.getFloat32(4, false),
+                            advCount: dataView.getUint32(8, false),
+                            uptime: dataView.getUint32(12, false)
+                        }
+                    }
+                };
+            default:
+                return null;
+        }
+    } catch (err) {
+        diagLog(`Fehler beim Parsen von Eddystone: ${err.message}`, 'error');
+        return null;
+    }
+}
+
+function decodeEddystoneUrl(dataView) {
+    const prefixScheme = ["http://www.", "https://www.", "http://", "https://"];
+    const tldEncoding = [
+        ".com/", ".org/", ".edu/", ".net/", ".info/", ".biz/", ".gov/",
+        ".com", ".org", ".edu", ".net", ".info/", ".biz", ".gov"
+    ];
+
+    let url = "";
+    const scheme = dataView.getUint8(0);
+    if (scheme < prefixScheme.length) {
+        url += prefixScheme[scheme];
+    }
+
+    for (let i = 1; i < dataView.byteLength; i++) {
+        const code = dataView.getUint8(i);
+        if (code < tldEncoding.length) {
+            url += tldEncoding[code];
+        } else {
+            url += String.fromCharCode(code);
+        }
+    }
+    return url;
+}
 
 export function calculateDistance(txPower, rssi) {
     if (rssi == null || rssi === 0) return 'N/A (Kein RSSI)';
@@ -313,7 +325,6 @@ export function calculateDistance(txPower, rssi) {
     try {
         const signalLoss = validTxPower - rssi;
         const distance = Math.pow(10, signalLoss / 20); // n=2
-
         if (distance < 100) return `${distance.toFixed(1)} m`;
         return `${(distance / 1000).toFixed(1)} km`;
     } catch (err) {
@@ -321,3 +332,4 @@ export function calculateDistance(txPower, rssi) {
         return 'N/A (Berechnungsfehler)';
     }
 }
+ 
