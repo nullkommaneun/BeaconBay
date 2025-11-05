@@ -1,10 +1,12 @@
 /**
- * js/bluetooth.js (Version 9.11 - "Filtered Handshake" & "Always Connectable")
+ * js/bluetooth.js (Version 9.12 - "Flipper-Hack" Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - V9.10: isInteresting-Logik in handleAdvertisement entfernt.
- * 'isConnectable' ist jetzt immer 'true'.
- * - V9.11: requestDeviceForHandshake holt den Namen des Geräts
- * und verwendet den Namensfilter.
+ * - PATCH 1 (V9.10): 'isInteresting'-Logik in handleAdvertisement
+ * ist (jetzt wirklich) entfernt. 'isConnectable' ist immer 'true'.
+ * (Behebt "GATT nicht verfügbar" beim Flipper).
+ * - PATCH 2 (V9.8): requestDeviceForHandshake verwendet
+ * 'acceptAllDevices: true' und ignoriert den Namensfilter.
+ * (Behebt "Leeres Pop-up"-Bug).
  */
 
 import { diagLog } from './errorManager.js';
@@ -32,7 +34,7 @@ let staleCheckInterval = null;
 let activeScan = null;
 let gattServer = null;
 let gattCharacteristicMap = new Map();
-let appCallbacks = {};
+let appCallbacks = {}; // (V9.9)
 
 // === KONSTANTEN ===
 const STALE_DEVICE_THRESHOLD_MS = 10000;
@@ -41,22 +43,18 @@ const STALE_CHECK_INTERVAL_MS = 2000;
 // === PRIVATE HELPER: SCANNING ===
 
 /**
- * V9.10 PATCH: 'isInteresting'-Logik entfernt.
+ * V9.12 (PATCH 1): 'isInteresting'-Logik entfernt.
  * Jedes Gerät wird als 'isConnectable = true' behandelt.
  */
 function handleAdvertisement(event) {
     try {
         logAdvertisement(event);
         
-        const { device } = event; // manufacturerData/serviceData nicht mehr nötig
-        
-        // V9.10 PATCH: Logik entfernt.
-        // const isInteresting = ...
-
+        const { device } = event; 
         const parsedData = parseAdvertisementData(event);
         if (!parsedData) return; 
         
-        // V9.10 PATCH: Immer verbindbar.
+        // V9.12 PATCH: Immer verbindbar. (Behebt "GATT nicht verfügbar")
         parsedData.isConnectable = true; 
         
         deviceMap.set(device.id, {
@@ -184,56 +182,50 @@ export function disconnect() {
     }
 }
 
-// === PUBLIC API: GATT INTERACTION (V9.11 PATCH) ===
+// === PUBLIC API: GATT INTERACTION (V9.12 PATCH) ===
 
 /**
- * V9.11 NEU: Phase 1 - Führt Handshake MIT NAMENSFILTER durch.
- * Geht davon aus, dass der Scan (in app.js) bereits gestoppt wurde.
- * @param {string} deviceId - Die ID des Geräts aus unserer 'deviceMap'.
+ * V9.12 (PATCH 2): Führt Handshake OHNE FILTER durch (V9.8-Logik).
+ * Der 'deviceId'-Parameter von app.js wird ignoriert.
+ * @param {string} [deviceId] - Wird ignoriert.
  * @returns {Promise<BluetoothDevice | null>} - Das autorisierte Gerät oder null.
  */
 export async function requestDeviceForHandshake(deviceId) {
-    diagLog(`[Handshake V9.11] Starte für ${deviceId.substring(0, 4)}...`, 'bt');
-    const deviceData = deviceMap.get(deviceId);
+    diagLog('[Handshake V9.12] Starte "acceptAllDevices"-Handshake...', 'bt');
     
-    if (!deviceData) {
-        diagLog(`[Handshake V9.11] FEHLER: Gerät ${deviceId} nicht in deviceMap gefunden.`, 'error');
-        return null;
+    // (Optional) Loggen, welches Gerät der Benutzer *wollte*
+    if (deviceId && deviceMap.has(deviceId)) {
+        const deviceName = deviceMap.get(deviceId).parsedData.name;
+        diagLog(`[Handshake V9.12] Benutzer wollte: ${deviceName || 'Unbenannt'} (${deviceId.substring(0,4)})`, 'bt');
     }
 
-    const deviceName = deviceData.parsedData.name;
-    if (!deviceName) {
-        diagLog(`[Handshake V9.11] FEHLER: Gerät ${deviceId} hat keinen Namen. Filter nicht möglich.`, 'error');
-        return null;
-    }
-    
     setGattConnectingUI(true); 
 
     try {
-        diagLog(`[Handshake V9.11] Fordere Erlaubnis für Gerät mit Namen an: "${deviceName}"`, 'bt');
+        diagLog('[Handshake V9.12] Fordere Erlaubnis für ALLE Geräte an...', 'bt');
         
         const device = await navigator.bluetooth.requestDevice({
-            filters: [{ name: deviceName }], // V9.11 TEST: Namensfilter
+            acceptAllDevices: true, // V9.12 PATCH: KEINE FILTER
             optionalServices: [
                 '0000180a-0000-1000-8000-00805f9b34fb', // Device Information
                 '0000180f-0000-1000-8000-00805f9b34fb'  // Battery Service
             ]
         });
         
-        diagLog(`[Handshake V9.11] Erlaubnis erteilt für: ${device.name}`, 'bt');
+        diagLog(`[Handshake V9.12] Erlaubnis erteilt für: ${device.name}`, 'bt');
         return device; 
 
     } catch (err) {
-        diagLog(`[Handshake V9.11] FEHLER: ${err.message}`, 'error');
+        diagLog(`[Handshake V9.12] FEHLER: ${err.message}`, 'error');
         if (err.name === 'NotFoundError' || err.name === 'NotAllowedError') {
-             diagLog('Handshake vom Benutzer abgelehnt oder Gerät (mit Filter) nicht gefunden.', 'warn');
+             diagLog('Handshake vom Benutzer abgelehnt oder kein Gerät ausgewählt.', 'warn');
         }
         return null; 
     }
 }
 
 /**
- * V9.11: Phase 2 - Unverändert. Verbindet mit autorisiertem Gerät.
+ * V9.12: Phase 2 - Unverändert. Verbindet mit autorisiertem Gerät.
  * @param {BluetoothDevice} device - Das autorisierte Gerät von requestDeviceForHandshake.
  * @returns {Promise<boolean>} - True bei Erfolg, False bei Fehler.
  */
@@ -275,7 +267,7 @@ export async function connectWithAuthorizedDevice(device) {
             for (const char of characteristics) {
                 const charUuid = char.uuid.toLowerCase();
                 const shortCharUuid = charUuid.startsWith("0000") ? `0x${charUuid.substring(4, 8)}` : charUuid;
-                const charName = KNOWN_CHARACTERISTICS.get(shortCharUuid) || 'Unknown Characteristic';
+                const charName = KNOWN_CHARACTERISTICS.get(shortUuid) || 'Unknown Characteristic';
                 
                 gattCharacteristicMap.set(charUuid, char);
                 serviceData.characteristics.push({
