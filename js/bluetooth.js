@@ -1,5 +1,5 @@
 /**
- * js/bluetooth.js (Version 6.2 - Korrigiert 'connectable' & 'stopScan')
+ * js/bluetooth.js (Version 6.2 - Vollständig & Korrigiert)
  * * ARCHITEKTUR-HINWEIS: Layer 3 Modul.
  * * KORREKTUR (V6.2):
  * - Greift jetzt korrekt auf 'event.device.connectable' statt 'event.connectable' zu.
@@ -47,6 +47,7 @@ function handleAdvertisement(event) {
         const { device } = event;
         
         // ==== HIER IST DIE 'connectable'-KORREKTUR ====
+        // Das Flag 'connectable' ist eine Eigenschaft von 'device', nicht von 'event'.
         const { connectable } = device; 
 
         const parsedData = parseAdvertisementData(event);
@@ -131,10 +132,6 @@ export async function startScan() {
     }
 }
 
-/**
- * Stoppt den Web Bluetooth LE Scan.
- * (Dies ist die Funktion, die im "Zombie"-Code leer war)
- */
 export function stopScan() {
     navigator.bluetooth.removeEventListener('advertisementreceived', handleAdvertisement);
 
@@ -158,9 +155,6 @@ export function stopScan() {
     diagLog('Scan-Ressourcen bereinigt.', 'bt');
 }
 
-/**
- * Trennt die aktive GATT-Verbindung.
- */
 export function disconnect() {
     if (!gattServer) return;
     gattServer.disconnect(); // Löst onGattDisconnect via Event aus
@@ -168,9 +162,6 @@ export function disconnect() {
 
 // === PUBLIC API: GATT INTERACTION ===
 
-/**
- * Verbindet sich mit einem Gerät über dessen ID.
- */
 export async function connectToDevice(deviceId) {
     const deviceData = deviceMap.get(deviceId);
     if (!deviceData) return diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
@@ -220,9 +211,6 @@ export async function connectToDevice(deviceId) {
     }
 }
 
-/**
- * Liest einen Wert von einer Characteristic.
- */
 export async function readCharacteristic(charUuid) {
     const char = gattCharacteristicMap.get(charUuid);
     if (!char || !char.properties.read) {
@@ -238,9 +226,6 @@ export async function readCharacteristic(charUuid) {
     }
 }
 
-/**
- * Startet Notifications für eine Characteristic.
- */
 export async function startNotifications(charUuid) {
     const char = gattCharacteristicMap.get(charUuid);
     if (!char || !char.properties.notify) {
