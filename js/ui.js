@@ -1,10 +1,10 @@
 /**
- * js/ui.js (Version 8 - Industrial Highlighting)
- * * ARCHITEKTUR-HINWEIS: Layer 2 Modul.
- * - NEU: Fügt eine 'INDUSTRIAL_COMPANIES'-Liste hinzu.
- * - NEU: 'updateBeaconUI' prüft 'device.company' und fügt die
- * CSS-Klasse '.industrial' hinzu, um Zielgeräte hervorzuheben.
- * - Enthält alle bisherigen Trace-Logs und Fixes.
+ * js/ui.js (Version 8.1 - Industrial Highlighting & Klick-Fix)
+ * * ARCHITEKTUR-HINWEIS:
+ * - Fügt 'INDUSTRIAL_COMPANIES'-Liste hinzu.
+ * - 'updateBeaconUI' fügt '.industrial'-Klasse hinzu.
+ * - 'updateBeaconUI' nutzt das 'isConnectable'-Flag (das jetzt 'isInteresting' bedeutet)
+ * um Karten klickbar zu machen.
  */
 
 import { diagLog } from './errorManager.js';
@@ -37,8 +37,6 @@ let appCallbacks = {};
 
 /**
  * NEU: Liste der Firmen, die wir als "Industrie-relevant" einstufen.
- * Diese werden in der UI hervorgehoben.
- * (Diese Liste muss mit 'company_ids.json' übereinstimmen)
  */
 const INDUSTRIAL_COMPANIES = [
     'Nordic Semiconductor ASA',
@@ -51,7 +49,8 @@ const INDUSTRIAL_COMPANIES = [
     'Robert Bosch GmbH',
     'KUKA AG',
     'Phoenix Contact',
-    'Murata Manufacturing Co., Ltd.'
+    'Murata Manufacturing Co., Ltd.',
+    'Volkswagen AG' // Fügen wir VW direkt hinzu
 ];
 
 
@@ -82,7 +81,7 @@ function updateSparkline(chart, rssi) {
 // === PRIVATE HELPER: RENDERING ===
 
 function renderTelemetry(telemetry) {
-    if (!telemetry.temperature) return ''; // Prüft auf ein Ruuvi-spezifisches Feld
+    if (!telemetry.temperature) return ''; 
     return `
         <div class="beacon-telemetry">
             <span>🌡️ ${telemetry.temperature} °C</span>
@@ -96,22 +95,19 @@ function renderTelemetry(telemetry) {
 function renderBeaconData(beaconData) {
     if (Object.keys(beaconData).length === 0) return '';
     let html = '<div class="beacon-data">';
-    
-    if (beaconData.uuid) { // iBeacon
+    if (beaconData.uuid) { 
         html += `
             <div><strong>UUID:</strong> ${beaconData.uuid}</div>
             <div><strong>Major:</strong> ${beaconData.major} | <strong>Minor:</strong> ${beaconData.minor}</div>
         `;
     }
-    if (beaconData.url) { // Eddystone-URL
-        html += `
-            <div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>
-        `;
+    if (beaconData.url) { 
+        html += `<div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>`;
     }
-    if (beaconData.uid) { // Eddystone-UID
+    if (beaconData.uid) { 
         html += `<div><strong>UID:</strong> ${beaconData.uid}</div>`;
     }
-    if (beaconData.telemetry) { // Eddystone-TLM
+    if (beaconData.telemetry) { 
         const tlm = beaconData.telemetry;
         html += `
             <div class="beacon-telemetry">
@@ -152,7 +148,6 @@ export function showView(viewName) {
         gattView.style.display = 'block';
         viewToggle.textContent = 'Beacon-Ansicht'; 
     } else {
-        // Standard ist Beacon-Ansicht
         gattView.style.display = 'none';
         beaconView.style.display = 'block';
         viewToggle.textContent = 'GATT-Ansicht';
@@ -162,7 +157,6 @@ export function showView(viewName) {
 export function showConnectingState(name) {
     showView('gatt');
     gattDeviceName.textContent = `Verbinde mit: ${name}...`;
-    // Summary-Box zurücksetzen
     gattSummaryBox.innerHTML = '';
     gattSummaryBox.style.display = 'none';
     gattTreeContainer.innerHTML = '<p>Verbinde und lese Services...</p>';
@@ -172,7 +166,7 @@ export function showConnectingState(name) {
 
 export function renderGattTree(gattTree, deviceName, summary) {
     gattDeviceName.textContent = `Verbunden mit: ${deviceName || 'Unbenannt'}`;
-    gattTreeContainer.innerHTML = ''; // Roh-Baum leeren
+    gattTreeContainer.innerHTML = ''; 
     
     // === 1. ZUSAMMENFASSUNG FÜLLEN ===
     if (summary && Object.keys(summary).length > 0) {
@@ -226,7 +220,7 @@ export function renderGattTree(gattTree, deviceName, summary) {
                 const valueElId = `val-${char.uuid}`;
 
                 charEl.innerHTML = `
-                    <div class="gatt-char-details">
+                    <div class.gatt-char-details">
                         <div class="gatt-char-name">${char.name}</div>
                         <div class="gatt-char-uuid">UUID: ${char.uuid}</div>
                         <div class="gatt-char-value" id="${valueElId}">Wert: --</div>
@@ -321,9 +315,10 @@ export function updateBeaconUI(deviceId, device) {
         card.id = deviceId;
         card.className = 'beacon-card';
         
-        // [TRACE 2]
-        diagLog(`[TRACE] updateBeaconUI: Prüfe connectable für ${device.id.substring(0, 4)}... Wert: ${device.isConnectable}`, 'utils');
+        // ==== [TRACE 2] ==== (Prüft jetzt das 'isInteresting'-Flag)
+        diagLog(`[TRACE] updateBeaconUI: Prüfe 'isConnectable' (isInteresting) für ${device.id.substring(0, 4)}... Wert: ${device.isConnectable}`, 'utils');
         
+        // HIER IST DIE BEHOBENE KLICK-LOGIK
         if (device.isConnectable) {
             // [TRACE 3A]
             diagLog(`[TRACE] updateBeaconUI: Hänge click listener an ${device.id.substring(0, 4)}... an.`, 'info');
@@ -338,12 +333,12 @@ export function updateBeaconUI(deviceId, device) {
                 }
             });
         } else {
-            // [TRACE 3B]
+            // [TRACE 3B] (z.B. für Flipper)
             diagLog(`[TRACE] updateBeaconUI: Mache ${device.id.substring(0, 4)}... NICHT klickbar.`, 'warn');
             card.classList.add('not-connectable');
         }
 
-        // ==== NEUE "INDUSTRIAL HIGHLIGHTING" LOGIK ====
+        // ==== HIER IST DIE NEUE "INDUSTRIAL HIGHLIGHTING" LOGIK ====
         if (INDUSTRIAL_COMPANIES.includes(device.company)) {
             diagLog(`[TRACE] updateBeaconUI: Markiere ${device.company} als Industrie-Gerät.`, 'info');
             card.classList.add('industrial');
@@ -362,7 +357,7 @@ export function updateBeaconUI(deviceId, device) {
             </div>
             ${renderTelemetry(device.telemetry)}
             ${renderBeaconData(device.beaconData)}
-            <div class="sparkline-container"><canvas></canvas></div>
+            <div class.sparkline-container"><canvas></canvas></div>
         `;
         beaconDisplay.prepend(card);
 
