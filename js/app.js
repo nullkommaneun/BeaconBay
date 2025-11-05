@@ -1,10 +1,9 @@
 /**
- * js/app.js (Version 9.11 - "Filtered Handshake" Patch)
+ * js/app.js (Version 9.15 - "Smart Filter" Dependency-Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - Kombiniert die V9.8-Stabilität (stopScan() zuerst)
- * mit der V9.7-Filterung (Namensfilter).
- * - gattConnectAction stoppt den Scan und ruft dann
- * requestDeviceForHandshake(deviceId) auf.
+ * - Behebt den V9.14-Bug ("springt zurück zum Scan").
+ * - initBluetooth übergibt jetzt 'onGetDeviceLog' an bluetooth.js,
+ * damit der "Smart Filter" auf die Logger-Daten zugreifen kann.
  */
 
 // Heartbeat
@@ -104,20 +103,14 @@ async function initApp() {
             }
         };
         
-        /**
-         * V9.11 PATCH: Führt V9.8 (stopScan zuerst) und V9.7 (Filter) zusammen.
-         */
         const gattConnectAction = async (deviceId) => {
-            diagLog(`Aktion: GATT-Handshake (MIT Filter) für ${deviceId.substring(0, 4)}... anfordern`, 'bt');
+            diagLog(`Aktion: GATT-Handshake (Smart Filter) für ${deviceId.substring(0, 4)}... anfordern`, 'bt');
             
-            // 1. ZUERST unseren Scan stoppen, um Adapter freizugeben
             stopScan();
             stopKeepAlive();
             
-            // 2. Handshake anfordern (startet Browser-internen Scan mit Filter)
             const authorizedDevice = await requestDeviceForHandshake(deviceId);
             
-            // 3. Prüfen, ob Handshake erfolgreich war (Benutzer hat Pop-up bestätigt)
             if (!authorizedDevice) {
                 diagLog('Handshake vom Benutzer abgelehnt oder fehlgeschlagen. Starte Scan neu...', 'bt');
                 setGattConnectingUI(false, 'Handshake abgelehnt');
@@ -125,13 +118,9 @@ async function initApp() {
                 return; 
             }
         
-            // 4. Handshake ERFOLGREICH.
             diagLog(`Handshake erfolgreich für ${authorizedDevice.name}. Verbinde...`, 'bt');
-            
-            // 5. Mit dem autorisierten Gerät verbinden
             const success = await connectWithAuthorizedDevice(authorizedDevice);
             
-            // 6. Fallback (falls Verbindung TROTZ Handshake fehlschlägt)
             if (!success) {
                 diagLog('Verbindung trotz Handshake fehlgeschlagen. Starte Scan neu...', 'bt');
                 scanAction(); 
@@ -171,12 +160,18 @@ async function initApp() {
         
         // --- Initialisierung ---
         diagLog('Initialisiere Bluetooth-Modul (und Logger)...', 'bt');
+        /**
+         * V9.15 PATCH: Übergibt jetzt 'onGetDeviceLog' an bluetooth.js,
+         * damit der "Smart Filter" (V9.14) funktioniert.
+         */
         initBluetooth({
-            onGattDisconnected: gattUnexpectedDisconnectAction
+            onGattDisconnected: gattUnexpectedDisconnectAction,
+            onGetDeviceLog: getDeviceLog 
         }); 
         
         diagLog('Lade Company IDs...', 'utils');
         await loadCompanyIDs();
+
 
         // --- UI-Listener mit Callbacks verbinden ---
         setupUIListeners({
@@ -189,7 +184,7 @@ async function initApp() {
             onRead: readAction,
             onNotify: notifyAction,
             onDownload: downloadAction,
-            onGetDeviceLog: getDeviceLog,
+            onGetDeviceLog: getDeviceLog, // (Bleibt hier für ui.js V9.2)
             onSort: () => {}, 
             onStaleToggle: () => {} 
         });
