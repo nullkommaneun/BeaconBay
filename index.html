@@ -19,8 +19,8 @@
 
     <nav class="toolbar">
         <div class="toolbar-group">
-            <button id="viewToggle" title="Ansicht umschalten">
-                GATT-Ansicht
+            <button id="viewToggle" title="Zurück zur Scan-Ansicht">
+                Beacon-Ansicht
             </button>
             <button id="sortButton" title="Nach Signalstärke (RSSI) sortieren">
                 Sortieren 📶
@@ -39,17 +39,32 @@
 
     <main id="view-container">
         
-        <div id="gatt-view" style="display: none;">
-            <div class="gatt-header">
-                <h2 id="gatt-device-name">Verbunden mit: ...</h2>
-                <button id="gattDisconnectButton">Trennen</button>
-            </div>
+        <div id="inspector-view" style="display: none;">
             
-            <div id="gatt-summary" class="gatt-summary-box">
+            <div class="inspector-header">
+                <h2 id="inspectorDeviceName">Geräte-Inspektor</h2>
+                <div class="controls">
+                    <button id="gattConnectButton">Verbinden</button>
+                    <button id="gattDisconnectButton" disabled>Trennen</button>
+                </div>
+            </div>
+
+            <div id="inspector-log-data" class="inspector-section">
+                <h3>Geloggte Advertisement-Daten</h3>
+                <div id="inspector-rssi-chart-container">
+                    <canvas id="inspectorRssiChart"></canvas>
+                </div>
+                <div id="inspector-ad-list">
+                    </div>
+            </div>
+
+            <div id="gatt-summary" class="gatt-summary-box" style="display: none;">
                 </div>
 
-            <div id="gatt-tree-container">
+            <div id="gatt-tree-container" class="inspector-section" style="display: none;">
+                <h3>GATT-Service-Baum</h3>
                 </div>
+
         </div>
 
         <div id="beacon-view">
@@ -65,9 +80,9 @@
     </footer>
 
     <script>
-      // Watchdog (unverändert)
       window.setTimeout(() => {
         if (window.__app_heartbeat !== true) {
+          console.error("WATCHDOG TIMEOUT: app.js wurde nicht korrekt ausgeführt.");
           const logPanel = document.getElementById('diag-log-panel');
           if (logPanel) {
             const errorEntry = document.createElement('span');
