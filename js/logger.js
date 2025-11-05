@@ -1,12 +1,17 @@
 /**
- * js/logger.js (NEUES MODUL)
+ * js/logger.js (Version 2 - Korrigiert)
  * * ARCHITEKTUR-HINWEIS: Layer 1 Modul.
  * * ABHÄNGIGKEITEN: errorManager.js, utils.js
  * * ZWECK:
- * 1. Dient als intelligenter Aggregator ("Logbuch") für die Scan-Sitzung.
+ * 1. Intelligenter Aggregator ("Logbuch") für die Scan-Sitzung.
  * 2. Speichert *nur* einzigartige Advertisements und einen *begrenzten*
  * RSSI-Verlauf, um die Speicher- (und Datei-)Größe zu kontrollieren.
  * 3. Stellt die Download-Funktion via Blob-Erstellung bereit.
+ *
+ * * KORREKTUREN (V2):
+ * - Speichert jetzt 'isConnectable' im Log-Eintrag.
+ * - Verwendet konsistente ISO-8601-Zeitstempel für den RSSI-Verlauf.
+ * - Erfasst "Name-Only"-Advertisements (blinder Fleck #2).
  */
 
 import { diagLog } from './errorManager.js';
@@ -16,7 +21,6 @@ import { dataViewToHex } from './utils.js'; // Für die Deduplizierung
 
 /**
  * Das In-Memory-Logbuch.
- * Struktur: Map { 'deviceId' => LogEntryObject }
  * @type {Map<string, object>}
  */
 let logStore = new Map();
@@ -28,21 +32,16 @@ let logStore = new Map();
 let scanStartTime = null;
 
 // === KONSTANTEN ===
-
-/**
- * Begrenzt die Anzahl der RSSI-Messwerte pro Gerät.
- * 200 Einträge * ~15 Bytes/Eintrag = ~3 KB pro Gerät.
- */
 const RSSI_HISTORY_LIMIT = 200;
 
 // === PRIVATE HELPER ===
 
 /**
- * Erstellt einen Zeitstempel-String für den RSSI-Verlauf.
- * @returns {string} Formatierte Zeit (HH:MM:SS).
+ * KORREKTUR: Erstellt einen konsistenten UTC-Zeitstempel.
+ * @returns {string} Vollständiger ISO-8601-Zeitstempel (UTC).
  */
 function getTimestamp() {
-    return new Date().toLocaleTimeString('de-DE', { hour12: false });
+    return new Date().toISOString();
 }
 
 /**
@@ -51,32 +50,29 @@ function getTimestamp() {
  * @param {number} rssi - Der neue RSSI-Wert.
  */
 function updateRssiHistory(historyArray, rssi) {
-    // 1. Neuen Eintrag hinzufügen
     historyArray.push({
-        t: getTimestamp(),
+        t: getTimestamp(), // Verwendet jetzt den vollen ISO-Zeitstempel
         r: rssi
     });
     
-    // 2. Ältesten Eintrag entfernen, wenn das Limit überschritten ist
     if (historyArray.length > RSSI_HISTORY_LIMIT) {
-        historyArray.shift(); // Entfernt das erste (älteste) Element
+        historyArray.shift();
     }
 }
 
 /**
- * Extrahiert, dedupliziert und speichert Advertisement-Daten.
+ * KORREKTUR: Extrahiert, dedupliziert und speichert Advertisement-Daten.
+ * Behandelt jetzt auch Pakete, die *nur* einen Namen senden.
  * @param {Set<string>} uniqueAdsSet - Das Set für einzigartige Payloads.
  * @param {Event} event - Das rohe Advertisement-Event.
  */
 function updateAdvertisements(uniqueAdsSet, event) {
-    const { manufacturerData, serviceData } = event;
-    let payloadHex = "";
-    let adData = {};
+    const { device, manufacturerData, serviceData } = event;
+    let adData = null;
 
     // 1. Prüfe Manufacturer Data
     if (manufacturerData && manufacturerData.size > 0) {
         const [companyId, dataView] = manufacturerData.entries().next().value;
-        payloadHex = `MFR|${companyId}|${dataViewToHex(dataView)}`;
         adData = {
             type: "manufacturerData",
             companyId: `0x${companyId.toString(16)}`,
@@ -86,19 +82,25 @@ function updateAdvertisements(uniqueAdsSet, event) {
     // 2. Prüfe Service Data (z.B. Eddystone)
     else if (serviceData && serviceData.size > 0) {
         const [serviceUuid, dataView] = serviceData.entries().next().value;
-        payloadHex = `SVC|${serviceUuid}|${dataViewToHex(dataView)}`;
         adData = {
             type: "serviceData",
             serviceUuid: `0x${serviceUuid.toString(16)}`,
             payload: dataViewToHex(dataView)
         };
+    }
+    // 3. KORREKTUR (Blinder Fleck #2): Fange "Name-Only"-Geräte ab
+    else if (device.name) {
+        adData = {
+            type: "nameOnly",
+            name: device.name
+        };
     } else {
-        return; // Kein relevantes Advertisement
+        return; // Wirklich leeres/irrelevantes Paket
     }
 
-    // 3. Deduplizierung: Füge den Payload nur hinzu, wenn er neu ist.
+    // 4. Deduplizierung: Füge das JSON-serialisierte Objekt zum Set hinzu.
     // Das Set kümmert sich automatisch um die Einzigartigkeit.
-    uniqueAdsSet.add(JSON.stringify(adData)); // (Sets speichern Objekte nicht nach Wert)
+    uniqueAdsSet.add(JSON.stringify(adData));
 }
 
 
@@ -123,7 +125,6 @@ export function setScanStart() {
 
 /**
  * Die Haupt-Logikfunktion. Wird von bluetooth.js für JEDES Paket aufgerufen.
- * Aggregiert die Daten intelligent.
  * @param {Event} event - Das rohe 'advertisementreceived'-Event.
  */
 export function logAdvertisement(event) {
@@ -137,12 +138,11 @@ export function logAdvertisement(event) {
         entry = {
             id: device.id,
             name: device.name || '[Unbenannt]',
+            // KORREKTUR (Blinder Fleck #1): Speichere connectable-Status
             isConnectable: connectable,
             firstSeen: new Date().toISOString(),
             lastSeen: new Date().toISOString(),
-            // WICHTIG: Set für einzigartige Payloads
             uniqueAdvertisements: new Set(),
-            // WICHTIG: Begrenztes Array für RSSI
             rssiHistory: []
         };
         logStore.set(device.id, entry);
@@ -177,11 +177,13 @@ export function generateLogFile() {
             scanEnded: new Date().toISOString(),
             totalDevicesFound: logStore.size
         },
-        // WICHTIG: Konvertiere die Map in ein Array
+        // Konvertiere die Map in ein Array
         devices: Array.from(logStore.values()).map(entry => {
-            // WICHTIG: Konvertiere das Set in ein Array für JSON
-            entry.uniqueAdvertisements = Array.from(entry.uniqueAdvertisements).map(JSON.parse);
-            return entry;
+            // Konvertiere das Set<string> in ein Array<object>
+            return {
+                ...entry,
+                uniqueAdvertisements: Array.from(entry.uniqueAdvertisements).map(JSON.parse)
+            };
         })
     };
 
@@ -196,12 +198,10 @@ export function generateLogFile() {
         a.href = url;
         a.download = `beaconbay_log_${new Date().toISOString()}.json`;
         
-        // WICHTIG: Unsichtbar zum DOM hinzufügen, klicken, entfernen
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         
-        // Blob-URL freigeben, um Speicherlecks zu vermeiden
         URL.revokeObjectURL(url);
         
         diagLog("Log-Datei erfolgreich generiert.", "info");
@@ -210,4 +210,3 @@ export function generateLogFile() {
         diagLog(`Fehler beim Erstellen der Log-Datei: ${err.message}`, 'error');
     }
 }
- 
