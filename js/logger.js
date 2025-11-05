@@ -1,7 +1,6 @@
 /**
  * js/logger.js (Version 3.2 - Neue 'isInteresting'-Logik)
- * * ARCHITEKTUR-HINWEIS: Layer 1 Modul.
- * * KORREKTUR (V3.2):
+ * * ARCHITEKTUR-HINWEIS:
  * - Ignoriert 'connectable'-Flag, da es unzuverlässig ist.
  * - Speichert stattdessen 'isInteresting', wenn manu/service daten vorhanden sind.
  */
@@ -58,7 +57,6 @@ function updateAdvertisements(uniqueAdsSet, event) {
     }
     uniqueAdsSet.add(JSON.stringify(adData));
 }
-
 
 // === PUBLIC API ===
 
@@ -145,4 +143,3 @@ export function generateLogFile() {
         diagLog(`Fehler beim Erstellen der Log-Datei: ${err.message}`, 'error');
     }
 }
- 
