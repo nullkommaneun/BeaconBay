@@ -1,18 +1,16 @@
 /**
- * js/app.js (Version 9.4 - Keep-Alive-Patch)
+ * js/app.js (Version 9.3 - Stabiler Stand)
  * * ARCHITEKTUR-HINWEIS:
- * - Behebt den "Scan-Tod" (Bug 1) durch Implementierung eines "Scan-Re-Triggers".
- * - scanAction startet jetzt ein Intervall, das den Scan alle 4 Minuten
- * proaktiv stoppt und neu startet, um den OS-Stromsparmodus zu umgehen.
- * - Dieses Intervall wird von stopScanAction und gattConnectAction sauber beendet.
+ * - Rollback von V9.4. Der "Scan-Re-Trigger" wurde entfernt,
+ * da er vom Betriebssystem blockiert wird.
+ * - Behebt den "gattServer is not defined" ReferenceError.
+ * - viewToggleAction ruft sauber die disconnect()-Funktion auf.
  */
 
 // Heartbeat
 window.__app_heartbeat = false;
 
-// V9.4 PATCH: Intervall für den proaktiven Scan-Neustart
-let scanRestartInterval = null;
-const SCAN_RESTART_INTERVAL_MS = 4 * 60 * 1000; // 4 Minuten
+// HINWEIS: V9.4-Timer-Variablen wurden entfernt.
 
 function earlyDiagLog(msg, isError = false) {
     try {
@@ -89,39 +87,16 @@ async function initApp() {
         // --- Callbacks definieren (Dependency Inversion) ---
         diagLog('Verbinde UI-Listener...', 'info');
 
-        /**
-         * V9.4 PATCH: Startet jetzt den Scan-Re-Trigger.
-         */
+        // (Rollback zu V9.3)
         const scanAction = () => {
             diagLog("Aktion: Scan gestartet (via app.js)", "bt");
             startKeepAlive();
-            startScan(); // Startet den Scan (wie bisher)
-            
-            // V9.4 PATCH: Starte den Re-Trigger
-            if (scanRestartInterval) clearInterval(scanRestartInterval);
-            
-            scanRestartInterval = setInterval(() => {
-                diagLog("Aktion: Proaktiver Scan-Neustart (Keep-Alive V9.4)", "bt");
-                // Rufe die Funktionen direkt auf, um einen sauberen Neustart zu erzwingen
-                stopScan(); 
-                setTimeout(() => {
-                    startScan(); 
-                }, 500); // 500ms Pause
-            }, SCAN_RESTART_INTERVAL_MS);
+            startScan();
         };
 
-        /**
-         * V9.4 PATCH: Stoppt jetzt auch den Scan-Re-Trigger.
-         */
+        // (Rollback zu V9.3)
         const stopScanAction = () => {
             diagLog("Aktion: Scan gestoppt (via app.js)", "bt");
-            
-            // V9.4 PATCH: Stoppe den Re-Trigger
-            if (scanRestartInterval) {
-                clearInterval(scanRestartInterval);
-                scanRestartInterval = null;
-            }
-            
             stopScan();
             stopKeepAlive();
         };
@@ -136,18 +111,9 @@ async function initApp() {
             }
         };
         
-        /**
-         * V9.4 PATCH: Stoppt jetzt auch den Scan-Re-Trigger.
-         */
+        // (Rollback zu V9.3)
         const gattConnectAction = (deviceId) => {
             diagLog(`Aktion: Verbinde GATT für ${deviceId.substring(0, 4)}...`, 'bt');
-
-            // V9.4 PATCH: Stoppe den Re-Trigger, wenn wir verbinden
-            if (scanRestartInterval) {
-                clearInterval(scanRestartInterval);
-                scanRestartInterval = null;
-            }
-
             // 1. JETZT den Scan stoppen
             stopScan();
             stopKeepAlive();
@@ -179,11 +145,6 @@ async function initApp() {
             diagLog("Aktion: Wechsle zur Beacon-Ansicht", "ui");
             showView('beacon');
             disconnect();
-            
-            // HINWEIS: Wir starten den Scan HIER NICHT neu, da 'stopScanAction'
-            // (das den Re-Trigger stoppt) beim Verbinden aufgerufen wird.
-            // Der Scan sollte im Hintergrund weiterlaufen, wenn er nicht
-            // für eine GATT-Verbindung gestoppt wurde.
         };
 
         // --- UI-Listener mit Callbacks verbinden ---
