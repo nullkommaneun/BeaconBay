@@ -4,9 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BeaconBay - Web BLE Analyzer</title>
-    
     <link rel="stylesheet" href="style.css">
-
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -46,6 +44,10 @@
                 <h2 id="gatt-device-name">Verbunden mit: ...</h2>
                 <button id="gattDisconnectButton">Trennen</button>
             </div>
+            
+            <div id="gatt-summary" class="gatt-summary-box">
+                </div>
+
             <div id="gatt-tree-container">
                 </div>
         </div>
@@ -62,11 +64,10 @@
         </div>
     </footer>
 
-
     <script>
+      // Watchdog (unverändert)
       window.setTimeout(() => {
         if (window.__app_heartbeat !== true) {
-          console.error("WATCHDOG TIMEOUT: app.js wurde nicht korrekt ausgeführt.");
           const logPanel = document.getElementById('diag-log-panel');
           if (logPanel) {
             const errorEntry = document.createElement('span');
@@ -77,9 +78,8 @@
             alert("FATAL: Anwendung konnte nicht geladen werden.");
           }
         }
-      }, 2500); // 2.5 Sekunden Puffer
+      }, 2500);
     </script>
-
     <script type="module" src="js/app.js"></script>
 
 </body>
