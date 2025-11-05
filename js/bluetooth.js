@@ -1,10 +1,10 @@
 /**
- * js/bluetooth.js (Version 9.12 - "Flipper-Hack" Patch)
+ * js/bluetooth.js (Version 9.12 - Kombinierter "Flipper-Hack" Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - PATCH 1 (V9.10): 'isInteresting'-Logik in handleAdvertisement
+ * - PATCH 1 (FIX): 'isInteresting'-Logik in handleAdvertisement
  * ist (jetzt wirklich) entfernt. 'isConnectable' ist immer 'true'.
  * (Behebt "GATT nicht verfügbar" beim Flipper).
- * - PATCH 2 (V9.8): requestDeviceForHandshake verwendet
+ * - PATCH 2 (FIX): requestDeviceForHandshake verwendet
  * 'acceptAllDevices: true' und ignoriert den Namensfilter.
  * (Behebt "Leeres Pop-up"-Bug).
  */
@@ -56,6 +56,8 @@ function handleAdvertisement(event) {
         
         // V9.12 PATCH: Immer verbindbar. (Behebt "GATT nicht verfügbar")
         parsedData.isConnectable = true; 
+        
+        // HINWEIS: Die alte Log-Zeile 'handleAdvertisement: ... isInteresting=' ist weg.
         
         deviceMap.set(device.id, {
             deviceObject: device, 
