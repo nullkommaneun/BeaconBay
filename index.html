@@ -22,10 +22,15 @@
     <nav class="toolbar">
         <div class="toolbar-group">
             <button id="viewToggle" title="Ansicht umschalten">
-                GATT-Ansicht (WIP)
+                GATT-Ansicht
             </button>
             <button id="sortButton" title="Nach Signalstärke (RSSI) sortieren">
                 Sortieren 📶
+            </button>
+        </div>
+        <div class="toolbar-group">
+            <button id="downloadButton" title="Scan-Protokoll herunterladen">
+                Log Herunterladen 💾
             </button>
         </div>
         <div class="toolbar-group">
@@ -42,8 +47,7 @@
                 <button id="gattDisconnectButton">Trennen</button>
             </div>
             <div id="gatt-tree-container">
-                <p>Lese Services...</p>
-            </div>
+                </div>
         </div>
 
         <div id="beacon-view">
@@ -67,7 +71,7 @@
           if (logPanel) {
             const errorEntry = document.createElement('span');
             errorEntry.className = 'log-entry log-error';
-            errorEntry.textContent = '[WATCHDOG] FATAL: Hauptanwendung (app.js) konnte nicht gestartet werden. Prüfen Sie das Diagnose-Log oder die Konsole auf Ladefehler.';
+            errorEntry.textContent = '[WATCHDOG] FATAL: Hauptanwendung (app.js) konnte nicht gestartet werden. Prüfen Sie das Diagnose-Log auf Ladefehler.';
             logPanel.prepend(errorEntry);
           } else {
             alert("FATAL: Anwendung konnte nicht geladen werden.");
