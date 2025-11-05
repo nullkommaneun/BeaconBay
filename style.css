@@ -301,3 +301,37 @@ input[type="checkbox"] {
     border-color: #444; /* Standard-Randfarbe beibehalten */
     box-shadow: none;
 }
+
+/* ======== GATT-ZUSAMMENFASSUNG (NEU) ======== */
+
+.gatt-summary-box {
+    background-color: var(--card-bg);
+    border: 1px solid var(--accent-color-secondary);
+    padding: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.gatt-summary-box h3 {
+    color: var(--accent-color-secondary);
+    margin-bottom: 0.75rem;
+    border-bottom: 1px dotted var(--accent-color-secondary);
+    padding-bottom: 0.5rem;
+}
+
+.gatt-summary-box div {
+    display: grid;
+    grid-template-columns: 180px 1fr;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.9rem;
+}
+
+.gatt-summary-box strong {
+    color: var(--text-color);
+}
+
+.gatt-summary-box span {
+    color: var(--accent-color-main);
+    /* Bricht lange Seriennummern um */
+    word-break: break-all; 
+}
