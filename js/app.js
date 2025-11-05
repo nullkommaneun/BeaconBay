@@ -1,13 +1,18 @@
 /**
- * js/app.js (Version 9.3 - Architektur-Patch)
+ * js/app.js (Version 9.4 - Keep-Alive-Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - Behebt den "gattServer is not defined" ReferenceError.
- * - viewToggleAction ruft jetzt sauber die disconnect()-Funktion des Treibers auf.
- * - Fügt onGetDeviceLog-Callback für ui.js (V9.2) hinzu.
+ * - Behebt den "Scan-Tod" (Bug 1) durch Implementierung eines "Scan-Re-Triggers".
+ * - scanAction startet jetzt ein Intervall, das den Scan alle 4 Minuten
+ * proaktiv stoppt und neu startet, um den OS-Stromsparmodus zu umgehen.
+ * - Dieses Intervall wird von stopScanAction und gattConnectAction sauber beendet.
  */
 
 // Heartbeat
 window.__app_heartbeat = false;
+
+// V9.4 PATCH: Intervall für den proaktiven Scan-Neustart
+let scanRestartInterval = null;
+const SCAN_RESTART_INTERVAL_MS = 4 * 60 * 1000; // 4 Minuten
 
 function earlyDiagLog(msg, isError = false) {
     try {
@@ -84,14 +89,39 @@ async function initApp() {
         // --- Callbacks definieren (Dependency Inversion) ---
         diagLog('Verbinde UI-Listener...', 'info');
 
+        /**
+         * V9.4 PATCH: Startet jetzt den Scan-Re-Trigger.
+         */
         const scanAction = () => {
             diagLog("Aktion: Scan gestartet (via app.js)", "bt");
             startKeepAlive();
-            startScan();
+            startScan(); // Startet den Scan (wie bisher)
+            
+            // V9.4 PATCH: Starte den Re-Trigger
+            if (scanRestartInterval) clearInterval(scanRestartInterval);
+            
+            scanRestartInterval = setInterval(() => {
+                diagLog("Aktion: Proaktiver Scan-Neustart (Keep-Alive V9.4)", "bt");
+                // Rufe die Funktionen direkt auf, um einen sauberen Neustart zu erzwingen
+                stopScan(); 
+                setTimeout(() => {
+                    startScan(); 
+                }, 500); // 500ms Pause
+            }, SCAN_RESTART_INTERVAL_MS);
         };
 
+        /**
+         * V9.4 PATCH: Stoppt jetzt auch den Scan-Re-Trigger.
+         */
         const stopScanAction = () => {
             diagLog("Aktion: Scan gestoppt (via app.js)", "bt");
+            
+            // V9.4 PATCH: Stoppe den Re-Trigger
+            if (scanRestartInterval) {
+                clearInterval(scanRestartInterval);
+                scanRestartInterval = null;
+            }
+            
             stopScan();
             stopKeepAlive();
         };
@@ -106,10 +136,22 @@ async function initApp() {
             }
         };
         
+        /**
+         * V9.4 PATCH: Stoppt jetzt auch den Scan-Re-Trigger.
+         */
         const gattConnectAction = (deviceId) => {
             diagLog(`Aktion: Verbinde GATT für ${deviceId.substring(0, 4)}...`, 'bt');
+
+            // V9.4 PATCH: Stoppe den Re-Trigger, wenn wir verbinden
+            if (scanRestartInterval) {
+                clearInterval(scanRestartInterval);
+                scanRestartInterval = null;
+            }
+
+            // 1. JETZT den Scan stoppen
             stopScan();
             stopKeepAlive();
+            // 2. Bluetooth-Modul anweisen, zu verbinden
             connectToDevice(deviceId);
         };
         
@@ -133,18 +175,15 @@ async function initApp() {
             generateLogFile();
         };
 
-        /**
-         * V9.3 PATCH: Behebt den ReferenceError.
-         * Ruft jetzt sauber die 'disconnect'-Funktion des Treibers auf,
-         * anstatt selbst 'gattServer' zu prüfen.
-         */
         const viewToggleAction = () => {
             diagLog("Aktion: Wechsle zur Beacon-Ansicht", "ui");
             showView('beacon');
-            
-            // KORREKT: Sage dem Treiber (bluetooth.js), er soll die Verbindung trennen.
-            // Der Treiber kümmert sich selbst darum, ob eine Verbindung besteht.
             disconnect();
+            
+            // HINWEIS: Wir starten den Scan HIER NICHT neu, da 'stopScanAction'
+            // (das den Re-Trigger stoppt) beim Verbinden aufgerufen wird.
+            // Der Scan sollte im Hintergrund weiterlaufen, wenn er nicht
+            // für eine GATT-Verbindung gestoppt wurde.
         };
 
         // --- UI-Listener mit Callbacks verbinden ---
@@ -158,13 +197,7 @@ async function initApp() {
             onRead: readAction,
             onNotify: notifyAction,
             onDownload: downloadAction,
-            
-            /**
-             * V9.3 PATCH: Hinzugefügt, da ui.js (V9.2) diesen Callback 
-             * benötigt, um den Button-Status korrekt zurückzusetzen.
-             */
-            onGetDeviceLog: getDeviceLog,
-            
+            onGetDeviceLog: getDeviceLog, // (Für V9.2 UI-Patch)
             onSort: () => {}, 
             onStaleToggle: () => {} 
         });
@@ -180,4 +213,3 @@ async function initApp() {
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
- 
