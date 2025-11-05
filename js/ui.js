@@ -1,9 +1,10 @@
 /**
- * js/ui.js (Version 7.5 - Sauber, keine Duplikate)
+ * js/ui.js (Version 8 - Industrial Highlighting)
  * * ARCHITEKTUR-HINWEIS: Layer 2 Modul.
- * - Enthält Trace-Logs für das Debugging von 'isConnectable'.
- * - Enthält den 'rssi'-Tippfehler-Fix.
- * - Enthält die GATT-Summary-Logik.
+ * - NEU: Fügt eine 'INDUSTRIAL_COMPANIES'-Liste hinzu.
+ * - NEU: 'updateBeaconUI' prüft 'device.company' und fügt die
+ * CSS-Klasse '.industrial' hinzu, um Zielgeräte hervorzuheben.
+ * - Enthält alle bisherigen Trace-Logs und Fixes.
  */
 
 import { diagLog } from './errorManager.js';
@@ -33,6 +34,26 @@ const gattSummaryBox = document.getElementById('gatt-summary');
 let isStaleModeActive = false;
 const chartMap = new Map();
 let appCallbacks = {};
+
+/**
+ * NEU: Liste der Firmen, die wir als "Industrie-relevant" einstufen.
+ * Diese werden in der UI hervorgehoben.
+ * (Diese Liste muss mit 'company_ids.json' übereinstimmen)
+ */
+const INDUSTRIAL_COMPANIES = [
+    'Nordic Semiconductor ASA',
+    'Texas Instruments',
+    'Silicon Labs',
+    'Espressif Inc.',
+    'Intel Corp.',
+    'Qualcomm',
+    'Siemens AG',
+    'Robert Bosch GmbH',
+    'KUKA AG',
+    'Phoenix Contact',
+    'Murata Manufacturing Co., Ltd.'
+];
+
 
 // === PRIVATE HELPER: CHARTING ===
 
@@ -321,15 +342,21 @@ export function updateBeaconUI(deviceId, device) {
             diagLog(`[TRACE] updateBeaconUI: Mache ${device.id.substring(0, 4)}... NICHT klickbar.`, 'warn');
             card.classList.add('not-connectable');
         }
+
+        // ==== NEUE "INDUSTRIAL HIGHLIGHTING" LOGIK ====
+        if (INDUSTRIAL_COMPANIES.includes(device.company)) {
+            diagLog(`[TRACE] updateBeaconUI: Markiere ${device.company} als Industrie-Gerät.`, 'info');
+            card.classList.add('industrial');
+        }
         
         card.innerHTML = `
             <h3>${device.name}</h3>
-            <div class.beacon-meta">
+            <div class="beacon-meta">
                 <small>${device.id}</small>
                 <span><strong>Firma:</strong> ${device.company}</span>
                 <span><strong>Typ:</strong> ${device.type}</span>
             </div>
-            <div class.beacon-signal">
+            <div class="beacon-signal">
                 <strong>RSSI:</strong> <span class="rssi-value">${device.rssi} dBm</span> | 
                 <strong>Distanz:</strong> <span class="distance-value">...</span>
             </div>
