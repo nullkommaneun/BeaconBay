@@ -1,9 +1,8 @@
 /**
- * js/bluetooth.js (Version 4 - Interaktive GATT-Logik)
+ * js/bluetooth.js (Version 5 - Prüft auf 'connectable')
  * * ARCHITEKTUR-HINWEIS:
- * - Speichert jetzt Live-Characteristic-Objekte in einer Map.
- * - Implementiert read/notify-Funktionen.
- * - Pusht Daten-Updates über `updateCharacteristicValue` an die UI.
+ * - handleAdvertisement liest jetzt event.connectable
+ * und fügt es als 'isConnectable' dem parsedData-Objekt hinzu.
  */
 
 import { diagLog } from './errorManager.js';
@@ -16,7 +15,7 @@ import {
     renderGattTree,
     showConnectingState,
     showView,
-    updateCharacteristicValue // NEU
+    updateCharacteristicValue
 } from './ui.js';
 
 // === MODULE STATE ===
@@ -24,16 +23,7 @@ let deviceMap = new Map();
 let staleCheckInterval = null;
 let activeScan = null;
 let gattServer = null;
-
-/**
- * NEU: Speichert die echten BluetoothRemoteGATTCharacteristic-Objekte.
- * WIE: Map { 'charUuid' => BluetoothRemoteGATTCharacteristic }
- * HINWEIS: Dies ist eine Vereinfachung. In einer echten Multi-Service-App
- * müsste der Schlüssel eine Kombination aus Service- und Char-UUID sein.
- * @type {Map<string, BluetoothRemoteGATTCharacteristic>}
- */
 let gattCharacteristicMap = new Map();
-
 
 // === KONSTANTEN ===
 const STALE_DEVICE_THRESHOLD_MS = 10000;
@@ -41,18 +31,30 @@ const STALE_CHECK_INTERVAL_MS = 2000;
 
 // === PRIVATE HELPER: SCANNING ===
 
+/**
+ * Callback für 'advertisementreceived'.
+ * @param {Event} event - Das Advertisement-Event.
+ */
 function handleAdvertisement(event) {
     try {
-        const { device } = event;
+        // HIER IST DIE NEUE LOGIK:
+        const { device, connectable } = event; // 'connectable' (boolean) extrahieren
+        
         const parsedData = parseAdvertisementData(event);
         if (!parsedData) return; 
         
+        // NEU: 'isConnectable'-Flag an das Objekt anhängen
+        parsedData.isConnectable = connectable;
+        
+        // Speichere das rohe Objekt UND die geparsten Daten
         deviceMap.set(device.id, {
-            deviceObject: device,
+            deviceObject: device, 
             parsedData: parsedData
         });
         
+        // Gebe die (jetzt angereicherten) geparsten Daten an die UI
         updateBeaconUI(device.id, parsedData);
+
     } catch (err) {
         diagLog(`Fehler in handleAdvertisement: ${err.message}`, 'error');
     }
@@ -73,23 +75,19 @@ function checkStaleDevices() {
 function onGattDisconnect() {
     diagLog('GATT-Verbindung getrennt.', 'bt');
     gattServer = null;
-    gattCharacteristicMap.clear(); // Wichtig: Char-Map leeren
+    gattCharacteristicMap.clear();
     showView('beacon');
     setScanStatus(false);
 }
 
 /**
- * NEU: Callback für 'characteristicvaluechanged' (Notify/Indicate).
- * Wird ausgelöst, wenn der Sensor einen neuen Wert sendet.
+ * Callback für 'characteristicvaluechanged' (Notify/Indicate).
  * @param {Event} event Das Event mit event.target.value (DataView)
  */
 function handleValueChange(event) {
     const charUuid = event.target.uuid;
-    const value = event.target.value; // Dies ist ein DataView
-    
+    const value = event.target.value; // DataView
     diagLog(`[Notify] Neuer Wert für ${charUuid}:`, 'bt');
-    
-    // Daten-Update an die UI pushen
     updateCharacteristicValue(charUuid, value);
 }
 
@@ -143,7 +141,7 @@ export function stopScan() {
 
 export function disconnect() {
     if (!gattServer) return;
-    gattServer.disconnect(); // Löst onGattDisconnect via Event aus
+    gattServer.disconnect();
 }
 
 // === PUBLIC API: GATT INTERACTION ===
@@ -151,11 +149,16 @@ export function disconnect() {
 export async function connectToDevice(deviceId) {
     const deviceData = deviceMap.get(deviceId);
     if (!deviceData) return diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
+    
+    // NEU: Zusätzliche Prüfung (obwohl die UI dies bereits verhindern sollte)
+    if (!deviceData.parsedData.isConnectable) {
+        return diagLog(`Aktion blockiert: Gerät ${deviceId} ist nicht verbindungsfähig.`, 'warn');
+    }
 
     if (activeScan && activeScan.active) stopScan();
     
     showConnectingState(deviceData.parsedData.name);
-    gattCharacteristicMap.clear(); // Alte Chars löschen
+    gattCharacteristicMap.clear();
 
     try {
         const device = deviceData.deviceObject;
@@ -168,20 +171,15 @@ export async function connectToDevice(deviceId) {
         
         const gattTree = [];
         for (const service of services) {
-            const serviceData = {
-                uuid: service.uuid,
-                characteristics: []
-            };
+            const serviceData = { uuid: service.uuid, characteristics: [] };
 
             try {
                 const characteristics = await service.getCharacteristics();
                 for (const char of characteristics) {
-                    // WICHTIG: Speichere das ECHTE Objekt in der Map
-                    gattCharacteristicMap.set(char.uuid, char);
-                    
+                    gattCharacteristicMap.set(char.uuid, char); // Speichere echtes Objekt
                     serviceData.characteristics.push({
                         uuid: char.uuid,
-                        properties: char.properties // (z.B. read, write, notify)
+                        properties: char.properties
                     });
                 }
             } catch (err) {
@@ -190,7 +188,6 @@ export async function connectToDevice(deviceId) {
             gattTree.push(serviceData);
         }
         
-        // Fertigen Baum (nur UUIDs/Properties) an die UI übergeben
         renderGattTree(gattTree, device.name);
 
     } catch (err) {
@@ -199,58 +196,34 @@ export async function connectToDevice(deviceId) {
     }
 }
 
-/**
- * NEU: Liest einen Wert von einer Characteristic.
- * @param {string} charUuid - Die UUID der Characteristic.
- */
 export async function readCharacteristic(charUuid) {
     const char = gattCharacteristicMap.get(charUuid);
-    if (!char) {
-        return diagLog(`Lesefehler: Characteristic ${charUuid} nicht gefunden.`, 'error');
-    }
-    if (!char.properties.read) {
-        return diagLog(`Lesefehler: Characteristic ${charUuid} ist nicht lesbar.`, 'error');
+    if (!char || !char.properties.read) {
+        return diagLog(`Lesefehler: Char ${charUuid} nicht gefunden oder nicht lesbar.`, 'error');
     }
     
     try {
         diagLog(`Lese Wert von ${charUuid}...`, 'bt');
-        const value = await char.readValue(); // Führt den Read aus
-        
-        // Daten-Update an die UI pushen
+        const value = await char.readValue();
         updateCharacteristicValue(charUuid, value);
-        
     } catch (err) {
         diagLog(`Fehler beim Lesen von ${charUuid}: ${err.message}`, 'error');
     }
 }
 
-/**
- * NEU: Startet Notifications für eine Characteristic.
- * @param {string} charUuid - Die UUID der Characteristic.
- */
 export async function startNotifications(charUuid) {
     const char = gattCharacteristicMap.get(charUuid);
-    if (!char) {
-        return diagLog(`Notify-Fehler: Characteristic ${charUuid} nicht gefunden.`, 'error');
-    }
-    if (!char.properties.notify) {
-        return diagLog(`Notify-Fehler: Characteristic ${charUuid} kann nicht abonniert werden.`, 'error');
+    if (!char || !char.properties.notify) {
+        return diagLog(`Notify-Fehler: Char ${charUuid} nicht gefunden oder nicht abonnierbar.`, 'error');
     }
     
     try {
         diagLog(`Starte Notifications für ${charUuid}...`, 'bt');
         await char.startNotifications();
-        
-        // WICHTIG: Den Event-Listener an diese Characteristic binden
         char.addEventListener('characteristicvaluechanged', handleValueChange);
-        
         diagLog(`Notifications für ${charUuid} gestartet.`, 'bt');
-        // UI-Update, um zu zeigen, dass Notify aktiv ist
         updateCharacteristicValue(charUuid, null, true); // true = "Notify aktiv"
-        
     } catch (err) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
 }
-
-// TODO: writeCharacteristic(charUuid, value) - als nächster Schritt
