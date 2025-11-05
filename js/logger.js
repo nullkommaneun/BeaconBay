@@ -1,8 +1,8 @@
 /**
- * js/logger.js (Version 3.2 - Neue 'isInteresting'-Logik)
+ * js/logger.js (Version 4 - Mit 'getDeviceLog')
  * * ARCHITEKTUR-HINWEIS:
- * - Ignoriert 'connectable'-Flag, da es unzuverlässig ist.
- * - Speichert stattdessen 'isInteresting', wenn manu/service daten vorhanden sind.
+ * - Fügt 'getDeviceLog(deviceId)' hinzu, um einem
+ * "Inspektor"-Fenster alle gesammelten Daten für ein Gerät bereitzustellen.
  */
 
 import { diagLog } from './errorManager.js';
@@ -11,22 +11,18 @@ import { dataViewToHex } from './utils.js';
 // === MODULE STATE ===
 let logStore = new Map();
 let scanStartTime = null;
-
-// === KONSTANTEN ===
 const RSSI_HISTORY_LIMIT = 200;
 
 // === PRIVATE HELPER ===
 function getTimestamp() {
     return new Date().toISOString();
 }
-
 function updateRssiHistory(historyArray, rssi) {
     historyArray.push({ t: getTimestamp(), r: rssi });
     if (historyArray.length > RSSI_HISTORY_LIMIT) {
         historyArray.shift();
     }
 }
-
 function updateAdvertisements(uniqueAdsSet, event) {
     const { device, manufacturerData, serviceData } = event;
     let adData = null;
@@ -71,11 +67,27 @@ export function setScanStart() {
 }
 
 /**
- * Die Haupt-Logikfunktion.
- * @param {Event} event - Das rohe 'advertisementreceived'-Event.
+ * NEU: Holt alle geloggten Daten für ein einzelnes Gerät.
+ * @param {string} deviceId - Die ID des Geräts.
+ * @returns {object | null} Das Log-Objekt oder null.
  */
+export function getDeviceLog(deviceId) {
+    const entry = logStore.get(deviceId);
+    if (!entry) {
+        diagLog(`Konnte Log für ${deviceId} nicht finden.`, 'warn');
+        return null;
+    }
+    
+    // WICHTIG: Wir geben eine KOPIE der Daten zurück,
+    // damit die UI nicht versehentlich unseren Logger-Status ändert.
+    return {
+        ...entry,
+        // Konvertiere das Set in ein Array für die UI
+        uniqueAdvertisements: Array.from(entry.uniqueAdvertisements).map(JSON.parse)
+    };
+}
+
 export function logAdvertisement(event) {
-    // ==== HIER IST DIE NEUE LOGIK ====
     const { device, rssi, manufacturerData, serviceData } = event;
     const isInteresting = (manufacturerData && manufacturerData.size > 0) || 
                           (serviceData && serviceData.size > 0);
@@ -86,7 +98,7 @@ export function logAdvertisement(event) {
         entry = {
             id: device.id,
             name: device.name || '[Unbenannt]',
-            isConnectable: isInteresting, // Speichert unser neues Flag
+            isConnectable: isInteresting, // Speichert unser 'interesting' Flag
             firstSeen: new Date().toISOString(),
             lastSeen: new Date().toISOString(),
             uniqueAdvertisements: new Set(),
@@ -95,7 +107,6 @@ export function logAdvertisement(event) {
         logStore.set(device.id, entry);
     }
 
-    // Aktualisiere 'isConnectable', falls es sich von 'false' auf 'true' ändert.
     if (isInteresting && !entry.isConnectable) {
         entry.isConnectable = true;
     }
