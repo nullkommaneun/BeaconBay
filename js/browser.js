@@ -1,11 +1,12 @@
 /**
- * js/browser.js
- * * ARCHITEKTUR-HINWEIS: Dies ist ein Modul auf Layer 1.
+ * js/browser.js (Version 2 - Mit Audio-Keep-Alive)
+ * * ARCHITEKTUR-HINWEIS: Layer 1 Modul.
  * * ABHÄNGIGKEITEN: errorManager.js
  * * ZWECK:
  * 1. Kapselt die "Keep-Alive"-Logik.
- * 2. Verwendet die Screen Wake Lock API (primär).
- * 3. Implementiert einen "unhörbaren Audio"-Fallback (sekundär).
+ * * KORREKTUR:
+ * - Startet jetzt *immer* den Audio-Fallback (für den BT-Chip)
+ * - *UND* versucht, den Screen Wake Lock zu bekommen (für den Bildschirm).
  */
 
 import { diagLog } from './errorManager.js';
@@ -31,33 +32,44 @@ let audioContext = null;
 let audioSource = null;
 
 /**
- * Startet den "Keep-Alive-Audio"-Stream (Fallback).
- * WARUM: Verhindert, dass das OS (bes. mobil) die App
- * in den Tiefschlaf versetzt, wenn der WakeLock nicht funktioniert.
+ * Startet den "Keep-Alive-Audio"-Stream (unhörbarer 20Hz-Ton).
+ * * WARUM: Verhindert, dass das OS (bes. mobil) die App-Prozesse
+ * oder den Bluetooth-Chip in den Tiefschlaf versetzt,
+ * selbst wenn der Bildschirm an ist.
  * @returns {boolean} - True bei Erfolg.
  */
 function startAudioFallback() {
-    if (audioContext) return true; 
+    if (audioContext) {
+        diagLog("Audio-Keep-Alive läuft bereits.", 'utils');
+        return true; 
+    }
 
     try {
         const AudioContextClass = window.AudioContext || window.webkitAudioContext;
         if (!AudioContextClass) {
-            diagLog("Audio-Fallback nicht unterstützt (kein AudioContext).", 'warn');
+            diagLog("Audio-Keep-Alive nicht unterstützt (kein AudioContext).", 'warn');
             return false;
         }
 
         audioContext = new AudioContextClass();
+        
+        // WICHTIG: Prüfen, ob der AudioContext "hängt" (passiert auf manchen Browsern)
+        // Wir müssen ihn durch eine Nutzergeste (den Klick) "aufwecken".
+        if (audioContext.state === 'suspended') {
+            audioContext.resume();
+        }
+
         audioSource = audioContext.createOscillator();
         audioSource.type = 'sine';
         audioSource.frequency.setValueAtTime(20, audioContext.currentTime); // 20 Hz
         audioSource.connect(audioContext.destination);
         audioSource.start();
         
-        diagLog("Audio-Fallback (20Hz Sinuston) gestartet.", 'info');
+        diagLog("Audio-Keep-Alive (20Hz) gestartet, um Scan aktiv zu halten.", 'info');
         return true;
 
     } catch (err) {
-        diagLog(`Fehler beim Starten des Audio-Fallbacks: ${err.message}`, 'error');
+        diagLog(`Fehler beim Starten des Audio-Keep-Alive: ${err.message}`, 'error');
         audioContext = null;
         audioSource = null;
         return false;
@@ -78,20 +90,24 @@ function stopAudioFallback() {
             audioContext.close();
             audioContext = null;
         }
-        diagLog("Audio-Fallback gestoppt.", 'info');
+        diagLog("Audio-Keep-Alive gestoppt.", 'info');
     } catch (err) {
-        diagLog(`Fehler beim Stoppen des Audio-Fallbacks: ${err.message}`, 'warn');
+        diagLog(`Fehler beim Stoppen des Audio-Keep-Alive: ${err.message}`, 'warn');
     }
 }
 
 // === PUBLIC API ===
 
 /**
- * Versucht, den Bildschirm-WakeLock zu aktivieren.
- * Wenn dies fehlschlägt, wird der Audio-Fallback gestartet.
+ * Startet alle "Keep-Alive"-Mechanismen.
+ * 1. Screen Wake Lock (damit der Bildschirm an bleibt).
+ * 2. Audio Fallback (damit der Scan nicht einschläft).
  */
 export async function startKeepAlive() {
-    // 1. Primärer Versuch: Screen Wake Lock API
+    // 1. Starte IMMER den Audio-Stream, um den Scan am Leben zu erhalten
+    startAudioFallback();
+
+    // 2. Versuche ZUSÄTZLICH, den Bildschirm wach zu halten
     if ('wakeLock' in navigator) {
         try {
             wakeLockSentinel = await navigator.wakeLock.request('screen');
@@ -100,24 +116,21 @@ export async function startKeepAlive() {
                 wakeLockSentinel = null;
             });
             diagLog('Screen WakeLock erfolgreich aktiviert.', 'info');
-            return; // Erfolg!
 
         } catch (err) {
-            diagLog(`Screen WakeLock fehlgeschlagen (${err.name}). Starte Audio-Fallback.`, 'warn');
+            // Das ist nicht fatal, der Audio-Stream läuft ja trotzdem
+            diagLog(`Screen WakeLock fehlgeschlagen (${err.name}). App bleibt dank Audio wach.`, 'warn');
         }
     } else {
-        diagLog('Screen WakeLock API nicht unterstützt. Starte Audio-Fallback.', 'info');
+        diagLog('Screen WakeLock API nicht unterstützt. App bleibt dank Audio wach.', 'info');
     }
-
-    // 2. Sekundärer Versuch: Audio-Fallback
-    startAudioFallback();
 }
 
 /**
  * Stoppt alle "Keep-Alive"-Mechanismen.
  */
 export function stopKeepAlive() {
-    // Stoppe WakeLock (falls aktiv)
+    // 1. Stoppe WakeLock (falls aktiv)
     if (wakeLockSentinel) {
         try {
             wakeLockSentinel.release();
@@ -128,7 +141,7 @@ export function stopKeepAlive() {
         }
     }
 
-    // Stoppe Audio (falls aktiv)
+    // 2. Stoppe Audio (falls aktiv)
     if (audioContext) {
         stopAudioFallback();
     }
