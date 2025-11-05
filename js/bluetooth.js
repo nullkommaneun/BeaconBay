@@ -1,10 +1,10 @@
 /**
- * js/bluetooth.js (Version 9.7 - Handshake-Workflow-Patch)
+ * js/bluetooth.js (Version 9.8 - "No-Filter" Handshake-Test)
  * * ARCHITEKTUR-HINWEIS:
- * - 'connectToDevice' wurde aufgeteilt in:
- * 1. requestDeviceForHandshake(deviceId): Führt Handshake durch (Scan muss laufen).
- * 2. connectWithAuthorizedDevice(device): Verbindet (Scan muss gestoppt sein).
- * - app.js (der Dirigent) steuert den Scan-Stopp *zwischen* diesen beiden Aufrufen.
+ * - requestDeviceForHandshake verwendet jetzt 'acceptAllDevices: true'
+ * und KEINE Filter mehr.
+ * - Dies ist der ultimative Test, ob der Browser-Dialog (Handy)
+ * überhaupt funktioniert.
  */
 
 import { diagLog } from './errorManager.js';
@@ -43,25 +43,18 @@ function handleAdvertisement(event) {
     // ... (unverändert)
     try {
         logAdvertisement(event);
-        
         const { device, manufacturerData, serviceData } = event;
         const isInteresting = (manufacturerData && manufacturerData.size > 0) || 
                               (serviceData && serviceData.size > 0);
-        
         diagLog(`[TRACE] handleAdvertisement: Gerät ${device.id.substring(0, 4)}... hat isInteresting=${isInteresting}`, 'utils');
-
         const parsedData = parseAdvertisementData(event);
         if (!parsedData) return; 
-        
         parsedData.isConnectable = isInteresting;
-        
         deviceMap.set(device.id, {
             deviceObject: device, 
             parsedData: parsedData
         });
-        
         updateBeaconUI(device.id, parsedData);
-
     } catch (err) {
         diagLog(`Fehler in handleAdvertisement: ${err.message}`, 'error');
     }
@@ -118,7 +111,6 @@ export async function startScan() {
         return;
     }
     showView('beacon');
-    
     setScanStatus(true);
     clearUI(); 
     deviceMap.clear(); 
@@ -172,60 +164,45 @@ export function disconnect() {
     }
 }
 
-// === PUBLIC API: GATT INTERACTION (V9.7 PATCH) ===
+// === PUBLIC API: GATT INTERACTION (V9.8 PATCH) ===
 
 /**
- * V9.7 NEU: Phase 1 - Führt NUR den Handshake (requestDevice) durch.
- * Der Scan MUSS währenddessen laufen.
- * @param {string} deviceId - Die ID des Geräts aus unserer 'deviceMap'.
+ * V9.8 NEU: Phase 1 - Führt Handshake OHNE FILTER durch.
+ * Geht davon aus, dass der Scan (in app.js) bereits gestoppt wurde.
  * @returns {Promise<BluetoothDevice | null>} - Das autorisierte Gerät oder null.
  */
-export async function requestDeviceForHandshake(deviceId) {
-    diagLog(`[Handshake] Starte für ${deviceId.substring(0, 4)}...`, 'bt');
-    const deviceData = deviceMap.get(deviceId);
-    
-    if (!deviceData) {
-        diagLog(`[Handshake] FEHLER: Gerät ${deviceId} nicht in deviceMap gefunden.`, 'error');
-        return null;
-    }
-
-    const deviceName = deviceData.parsedData.name;
-    if (!deviceName) {
-        diagLog(`[Handshake] FEHLER: Gerät ${deviceId} hat keinen Namen.`, 'error');
-        return null;
-    }
+export async function requestDeviceForHandshake() {
+    diagLog('[Handshake V9.8] Starte "acceptAllDevices"-Handshake...', 'bt');
     
     // UI in "Verbinde..."-Zustand versetzen, während Pop-up offen ist
     setGattConnectingUI(true); 
 
     try {
-        diagLog(`[Handshake] Fordere Erlaubnis für Gerät mit Namen an: "${deviceName}"`, 'bt');
+        diagLog('[Handshake V9.8] Fordere Erlaubnis für ALLE Geräte an...', 'bt');
         
         const device = await navigator.bluetooth.requestDevice({
-            filters: [{ name: deviceName }],
+            acceptAllDevices: true, // V9.8 TEST: KEINE FILTER
             optionalServices: [
                 '0000180a-0000-1000-8000-00805f9b34fb', // Device Information
                 '0000180f-0000-1000-8000-00805f9b34fb'  // Battery Service
             ]
         });
         
-        diagLog(`[Handshake] Erlaubnis erteilt für: ${device.name}`, 'bt');
+        diagLog(`[Handshake V9.8] Erlaubnis erteilt für: ${device.name}`, 'bt');
         return device; // Gibt das autorisierte Gerät zurück
 
     } catch (err) {
-        diagLog(`[Handshake] FEHLER: ${err.message}`, 'error');
+        diagLog(`[Handshake V9.8] FEHLER: ${err.message}`, 'error');
         if (err.name === 'NotFoundError' || err.name === 'NotAllowedError') {
-             diagLog('Handshake vom Benutzer abgelehnt oder Gerät nicht gefunden.', 'warn');
+             diagLog('Handshake vom Benutzer abgelehnt oder kein Gerät ausgewählt.', 'warn');
         }
         return null; // Gibt null bei Fehler/Ablehnung zurück
     }
 }
 
 /**
- * V9.7 NEU: Phase 2 - Hieß vorher 'connectToDevice'.
- * Nimmt jetzt ein *bereits autorisiertes* Gerät und führt
- * die GATT-Verbindung und Service Discovery durch.
- * Geht davon aus, dass der Scan bereits gestoppt wurde.
+ * V9.8: Phase 2 - Unverändert gegenüber V9.7
+ * Nimmt ein autorisiertes Gerät und führt die GATT-Verbindung durch.
  * @param {BluetoothDevice} device - Das autorisierte Gerät von requestDeviceForHandshake.
  * @returns {Promise<boolean>} - True bei Erfolg, False bei Fehler.
  */
