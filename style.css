@@ -335,3 +335,15 @@ input[type="checkbox"] {
     /* Bricht lange Seriennummern um */
     word-break: break-all; 
 }
+
+/* NEU: Visuelles Hervorheben von Industrie-Geräten */
+.beacon-card.industrial {
+    /* Ein leuchtend gelber/oranger Rand, der "Alarm" schreit */
+    border: 2px solid #FFD700; 
+    box-shadow: 0 0 15px #FFD700;
+}
+
+.beacon-card.industrial h3 {
+    color: #FFD700; /* Überschreibt das Standard-Cyan */
+}
+
