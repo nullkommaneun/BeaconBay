@@ -1,15 +1,10 @@
 /**
- * js/logger.js (Version 3 - Korrigiert & Robust)
+ * js/logger.js (Version 3.1 - Korrigiert 'connectable')
  * * ARCHITEKTUR-HINWEIS: Layer 1 Modul.
  * * ABHÄNGIGKEITEN: errorManager.js, utils.js
- * * ZWECK:
- * 1. Intelligenter Aggregator ("Logbuch") für die Scan-Sitzung.
- * 2. Speichert *nur* einzigartige Advertisements und einen *begrenzten*
- * RSSI-Verlauf, um die Speicher- (und Datei-)Größe zu kontrollieren.
- * 3. Stellt die Download-Funktion via Blob-Erstellung bereit.
- *
- * * KORREKTUREN (V3):
- * - Speichert 'isConnectable' jetzt KORREKT im Log-Eintrag (Blinder Fleck #1).
+ * * KORREKTUREN (V3.1):
+ * - Greift jetzt korrekt auf 'event.device.connectable' statt 'event.connectable' zu.
+ * - Speichert 'isConnectable' jetzt KORREKT im Log-Eintrag.
  * - Aktualisiert 'isConnectable', falls es sich von 'false' auf 'true' ändert.
  * - Verwendet konsistente ISO-8601-Zeitstempel.
  * - Erfasst "Name-Only"-Advertisements.
@@ -93,7 +88,10 @@ export function setScanStart() {
  * @param {Event} event - Das rohe 'advertisementreceived'-Event.
  */
 export function logAdvertisement(event) {
-    const { device, rssi, connectable } = event;
+    // ==== HIER IST DIE KORREKTUR ====
+    // Das Flag 'connectable' ist eine Eigenschaft von 'device', nicht von 'event'.
+    const { device, rssi } = event;
+    const { connectable } = device;
 
     // 1. Prüfen, ob wir dieses Gerät schon kennen
     let entry = logStore.get(device.id);
@@ -103,8 +101,7 @@ export function logAdvertisement(event) {
         entry = {
             id: device.id,
             name: device.name || '[Unbenannt]',
-            // ==== HIER IST DIE KORREKTUR (Blinder Fleck #1) ====
-            isConnectable: connectable, 
+            isConnectable: connectable, // Speichert jetzt true/false, nicht undefined
             firstSeen: new Date().toISOString(),
             lastSeen: new Date().toISOString(),
             uniqueAdvertisements: new Set(),
@@ -115,7 +112,6 @@ export function logAdvertisement(event) {
 
     // === KORREKTUR (Robustheit) ===
     // Aktualisiere 'isConnectable', falls es sich von 'false' auf 'true' ändert.
-    // (Ein Gerät könnte 'non-connectable' senden und 1 Sek. später 'connectable')
     if (connectable && !entry.isConnectable) {
         entry.isConnectable = true;
     }
