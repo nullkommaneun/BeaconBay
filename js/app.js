@@ -1,10 +1,10 @@
 /**
- * js/app.js (Version 9.8 - "No-Filter" Handshake-Test)
+ * js/app.js (Version 9.9 - "Ultimate Stability" Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - Um einen "Adapter-Konflikt" zu vermeiden, stoppt gattConnectAction
- * jetzt ZUERST den Scan (stopScan/stopKeepAlive).
- * - ERST DANN ruft es bluetooth.requestDeviceForHandshake() auf,
- * das den Browser-Scan (ohne Filter) startet.
+ * - Übergibt einen 'onGattDisconnected'-Callback an bluetooth.js.
+ * - Dieser Callback (gattUnexpectedDisconnectAction) startet den Scan neu,
+ * wenn die Verbindung unerwartet abbricht (z.B. Gerät geht außer Reichweite).
+ * - Die App kehrt jetzt IMMER in einen stabilen Scan-Zustand zurück.
  */
 
 // Heartbeat
@@ -79,13 +79,6 @@ async function initApp() {
 
         diagLog('Alle Module erfolgreich geladen.', 'info');
 
-        // --- Initialisierung ---
-        diagLog('Initialisiere Bluetooth-Modul (und Logger)...', 'bt');
-        initBluetooth(); 
-        
-        diagLog('Lade Company IDs...', 'utils');
-        await loadCompanyIDs();
-
         // --- Callbacks definieren (Dependency Inversion) ---
         diagLog('Verbinde UI-Listener...', 'info');
 
@@ -111,46 +104,43 @@ async function initApp() {
             }
         };
         
-        /**
-         * V9.8 PATCH: Stoppt ZUERST den Scan, DANN Handshake (ohne Filter).
-         */
-        const gattConnectAction = async (deviceId) => { // deviceId wird nicht mehr gebraucht, aber zur Signatur beibehalten
+        const gattConnectAction = async (deviceId) => {
             diagLog(`Aktion: GATT-Handshake (ohne Filter) anfordern...`, 'bt');
             
-            // 1. ZUERST unseren Scan stoppen, um Adapter freizugeben
             stopScan();
             stopKeepAlive();
             
-            // 2. Handshake anfordern (startet Browser-internen Scan)
-            // V9.8: Rufe ohne deviceId auf
             const authorizedDevice = await requestDeviceForHandshake();
             
-            // 3. Prüfen, ob Handshake erfolgreich war (Benutzer hat Pop-up bestätigt)
             if (!authorizedDevice) {
                 diagLog('Handshake vom Benutzer abgelehnt oder fehlgeschlagen. Starte Scan neu...', 'bt');
-                // Setze UI zurück (Ladebalken aus) UND starte Scan neu
                 setGattConnectingUI(false, 'Handshake abgelehnt');
-                scanAction(); // Zurück zur Scan-Liste
+                scanAction(); 
                 return; 
             }
         
-            // 4. Handshake ERFOLGREICH.
             diagLog(`Handshake erfolgreich für ${authorizedDevice.name}. Verbinde...`, 'bt');
-            
-            // 5. Mit dem autorisierten Gerät verbinden
             const success = await connectWithAuthorizedDevice(authorizedDevice);
             
-            // 6. Fallback (falls Verbindung TROTZ Handshake fehlschlägt)
             if (!success) {
                 diagLog('Verbindung trotz Handshake fehlgeschlagen. Starte Scan neu...', 'bt');
                 scanAction(); 
             }
-            // Wenn 'success' true ist, sind wir verbunden und im Inspektor.
         };
         
         const gattDisconnectAction = () => {
             diagLog('Aktion: Trenne GATT-Verbindung (via app.js)', 'bt');
             disconnect();
+        };
+        
+        /**
+         * V9.9 NEU: Dieser Callback wird von bluetooth.js aufgerufen,
+         * wenn die Verbindung *unerwartet* abbricht (z.B. Gerät außer Reichweite).
+         */
+        const gattUnexpectedDisconnectAction = () => {
+            diagLog('Unerwartete Trennung (onGattDisconnect). Starte Scan neu...', 'bt');
+            // Einfach scanAction aufrufen, um die App zurückzusetzen.
+            scanAction();
         };
 
         const readAction = (charUuid) => {
@@ -173,6 +163,19 @@ async function initApp() {
             showView('beacon');
             disconnect();
         };
+        
+        // --- Initialisierung ---
+        diagLog('Initialisiere Bluetooth-Modul (und Logger)...', 'bt');
+        /**
+         * V9.9 PATCH: Übergibt den neuen Callback an den Treiber
+         */
+        initBluetooth({
+            onGattDisconnected: gattUnexpectedDisconnectAction
+        }); 
+        
+        diagLog('Lade Company IDs...', 'utils');
+        await loadCompanyIDs();
+
 
         // --- UI-Listener mit Callbacks verbinden ---
         setupUIListeners({
@@ -180,7 +183,7 @@ async function initApp() {
             onStopScan: stopScanAction,
             onInspect: inspectAction,
             onGattConnect: gattConnectAction,
-            onGattDisconnect: gattDisconnectAction,
+            onGattDisconnect: gattDisconnectAction, // Dies ist der *gewollte* Disconnect (Button-Klick)
             onViewToggle: viewToggleAction,
             onRead: readAction,
             onNotify: notifyAction,
@@ -201,3 +204,4 @@ async function initApp() {
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
+ 
