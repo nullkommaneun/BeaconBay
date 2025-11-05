@@ -1,8 +1,9 @@
 /**
- * js/logger.js (Version 4 - Mit 'getDeviceLog')
+ * js/logger.js (Version 9.13 - "Always Connectable" Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - Fügt 'getDeviceLog(deviceId)' hinzu, um einem
- * "Inspektor"-Fenster alle gesammelten Daten für ein Gerät bereitzustellen.
+ * - Behebt den "GATT nicht verfügbar"-Bug für "Name Only"-Geräte (z.B. Flipper).
+ * - Die fehlerhafte 'isInteresting'-Logik wurde entfernt (parallel zu bluetooth.js V9.12).
+ * - 'isConnectable' wird jetzt für JEDES neue Gerät standardmäßig auf 'true' gesetzt.
  */
 
 import { diagLog } from './errorManager.js';
@@ -87,10 +88,16 @@ export function getDeviceLog(deviceId) {
     };
 }
 
+/**
+ * V9.13 PATCH: 'isInteresting'-Logik entfernt.
+ */
 export function logAdvertisement(event) {
-    const { device, rssi, manufacturerData, serviceData } = event;
-    const isInteresting = (manufacturerData && manufacturerData.size > 0) || 
-                          (serviceData && serviceData.size > 0);
+    // V9.13: 'manufacturerData'/'serviceData' werden hier nicht mehr benötigt.
+    const { device, rssi } = event; 
+    
+    // V9.13: Fehlerhafte Logik entfernt.
+    // const isInteresting = (manufacturerData && manufacturerData.size > 0) || 
+    //                       (serviceData && serviceData.size > 0);
 
     let entry = logStore.get(device.id);
 
@@ -98,7 +105,8 @@ export function logAdvertisement(event) {
         entry = {
             id: device.id,
             name: device.name || '[Unbenannt]',
-            isConnectable: isInteresting, // Speichert unser 'interesting' Flag
+            // V9.13 FIX: Immer 'true' setzen.
+            isConnectable: true, 
             firstSeen: new Date().toISOString(),
             lastSeen: new Date().toISOString(),
             uniqueAdvertisements: new Set(),
@@ -107,9 +115,10 @@ export function logAdvertisement(event) {
         logStore.set(device.id, entry);
     }
 
-    if (isInteresting && !entry.isConnectable) {
-        entry.isConnectable = true;
-    }
+    // V9.13: Diese Logik ist jetzt überflüssig und entfernt.
+    // if (isInteresting && !entry.isConnectable) {
+    //     entry.isConnectable = true;
+    // }
     
     entry.lastSeen = new Date().toISOString();
     updateRssiHistory(entry.rssiHistory, rssi);
