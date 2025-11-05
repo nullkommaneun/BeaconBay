@@ -1,12 +1,18 @@
 /**
- * js/bluetooth.js (Version 6.4 - Neue 'isInteresting'-Logik)
+ * js/bluetooth.js (Version 7 - Smart Driver mit DIS-Parsing)
  * * ARCHITEKTUR-HINWEIS:
- * - Ignoriert das unzuverlässige 'connectable'-Flag.
- * - Fügt stattdessen ein 'isInteresting'-Flag hinzu, wenn das Gerät
- * manufacturerData oder serviceData sendet.
+ * - Ignoriert das unzuverlässige 'connectable'-Flag (der Klick-Bug).
+ * - Verwendet stattdessen 'isInteresting' (hat manu/service daten) als Klick-Logik.
+ * - Importiert 'KNOWN_SERVICES'/'decodeKnownCharacteristic' aus utils.js.
+ * - 'connectToDevice' wurde "aufgebohrt":
+ * 1. Erstellt ein 'summary'-Objekt.
+ * 2. Erkennt automatisch den "Device Information Service" (0x180A).
+ * 3. Liest automatisch alle bekannten Characteristics darin aus.
+ * 4. Übergibt das 'summary'-Objekt an 'renderGattTree'.
  */
 
 import { diagLog } from './errorManager.js';
+// Importiere die Wissensdatenbank
 import { 
     parseAdvertisementData, 
     KNOWN_SERVICES, 
@@ -40,18 +46,18 @@ const STALE_CHECK_INTERVAL_MS = 2000;
 
 function handleAdvertisement(event) {
     try {
-        // Logger füttern (Logger V3.2 greift intern korrekt zu)
+        // 1. Logger füttern (Logger V3.2 greift intern korrekt zu)
         logAdvertisement(event);
         
         const { device, manufacturerData, serviceData } = event;
 
-        // ==== NEUE LOGIK (ersetzt 'connectable') ====
+        // ==== NEUE "Klick-Logik" (ersetzt 'connectable') ====
         // Ein Gerät ist "interessant" (potenziell verbindungsfähig),
         // wenn es mehr als nur seinen Namen sendet.
         const isInteresting = (manufacturerData && manufacturerData.size > 0) || 
                               (serviceData && serviceData.size > 0);
         
-        // ==== [TRACE 1] ====
+        // [TRACE 1]
         diagLog(`[TRACE] handleAdvertisement: Gerät ${device.id.substring(0, 4)}... hat isInteresting=${isInteresting}`, 'utils');
 
         const parsedData = parseAdvertisementData(event);
@@ -185,7 +191,9 @@ export async function connectToDevice(deviceId) {
 
         for (const service of services) {
             const serviceUuid = service.uuid.toLowerCase();
-            const serviceName = KNOWN_SERVICES.get(serviceUuid) || 'Unknown Service';
+            // Wandle 16-Bit-UUIDs (falls vom Browser so geliefert) in 32-Bit-Strings um
+            const shortUuid = serviceUuid.startsWith("0000") ? `0x${serviceUuid.substring(4, 8)}` : serviceUuid;
+            const serviceName = KNOWN_SERVICES.get(shortUuid) || 'Unknown Service';
             
             const serviceData = {
                 uuid: serviceUuid,
@@ -202,7 +210,8 @@ export async function connectToDevice(deviceId) {
 
             for (const char of characteristics) {
                 const charUuid = char.uuid.toLowerCase();
-                const charName = KNOWN_CHARACTERISTICS.get(charUuid) || 'Unknown Characteristic';
+                const shortCharUuid = charUuid.startsWith("0000") ? `0x${charUuid.substring(4, 8)}` : charUuid;
+                const charName = KNOWN_CHARACTERISTICS.get(shortCharUuid) || 'Unknown Characteristic';
                 
                 gattCharacteristicMap.set(charUuid, char);
                 serviceData.characteristics.push({
@@ -217,7 +226,7 @@ export async function connectToDevice(deviceId) {
                 {
                     try {
                         const value = await char.readValue();
-                        const decodedValue = decodeKnownCharacteristic(charUuid, value);
+                        const decodedValue = decodeKnownCharacteristic(shortCharUuid, value);
                         gattSummary[charName] = decodedValue;
                         diagLog(`[SmartDriver] ${charName}: ${decodedValue}`, 'bt');
                     } catch (readErr) {
@@ -244,7 +253,8 @@ export async function readCharacteristic(charUuid) {
     try {
         diagLog(`Lese Wert von ${charUuid}...`, 'bt');
         const value = await char.readValue();
-        const decodedValue = decodeKnownCharacteristic(charUuid, value);
+        const shortCharUuid = charUuid.startsWith("0000") ? `0x${charUuid.substring(4, 8)}` : charUuid;
+        const decodedValue = decodeKnownCharacteristic(shortCharUuid, value);
         updateCharacteristicValue(charUuid, value, false, decodedValue);
     } catch (err) {
         diagLog(`Fehler beim Lesen von ${charUuid}: ${err.message}`, 'error');
@@ -266,4 +276,3 @@ export async function startNotifications(charUuid) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
 }
- 
