@@ -1,10 +1,9 @@
 /**
- * js/bluetooth.js (Version 8 - Inspektor-Modell)
+ * js/bluetooth.js (Version 9.3 - Architektur-Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - 'connectToDevice' stoppt den Scan NICHT MEHR.
- * - Das Stoppen des Scans wird jetzt von app.js (dem Dirigenten)
- * als Reaktion auf den 'onGattConnect'-Callback gesteuert.
- * - 'onGattDisconnect' startet den Scan nicht mehr neu.
+ * - Macht die Funktionen 'disconnect' und 'onGattDisconnect' robuster,
+ * indem sie den Status von 'gattServer' prüfen, bevor sie darauf zugreifen.
+ * - Behebt potenzielle Race-Conditions beim Trennen der Verbindung.
  */
 
 import { diagLog } from './errorManager.js';
@@ -21,10 +20,9 @@ import {
     clearUI, 
     setCardStale,
     renderGattTree,
-    // showConnectingState, // Veraltet, wird jetzt von showInspectorView übernommen
     showView,
     updateCharacteristicValue,
-    setGattConnectingUI // NEU
+    setGattConnectingUI
 } from './ui.js';
 
 // === MODULE STATE ===
@@ -76,11 +74,18 @@ function checkStaleDevices() {
     });
 }
 
+/**
+ * V9.3 PATCH: Robuster gemacht.
+ * Prüft, ob gattServer existiert, bevor der Listener entfernt wird.
+ */
 function onGattDisconnect() {
     diagLog('GATT-Verbindung getrennt.', 'bt');
+    
+    // V9.3 PATCH: Prüfen, ob gattServer existiert (verhindert Race-Condition)
     if (gattServer) {
         gattServer.device.removeEventListener('gattserverdisconnected', onGattDisconnect);
     }
+    
     gattServer = null;
     gattCharacteristicMap.clear();
     setScanStatus(false); // Scan-Buttons zurücksetzen
@@ -113,7 +118,6 @@ export async function startScan() {
         diagLog('Scan läuft bereits.', 'warn');
         return;
     }
-    // Stelle sicher, dass wir in der Beacon-Ansicht sind
     showView('beacon');
     setScanStatus(true);
     clearUI(); 
@@ -153,13 +157,25 @@ export function stopScan() {
     diagLog('Scan-Ressourcen bereinigt.', 'bt');
 }
 
+/**
+ * V9.3 PATCH: Robuster gemacht.
+ * Diese Funktion wird jetzt von app.js aufgerufen, ohne dass app.js
+ * den Verbindungsstatus kennt.
+ */
 export function disconnect() {
     if (!gattServer) {
-        diagLog('Keine Verbindung zum Trennen vorhanden.', 'warn');
+        diagLog('[BT] disconnect: Ignoriert, da gattServer null ist.', 'bt');
         return;
     }
-    gattServer.disconnect(); 
-    // onGattDisconnect() wird durch das Event aufgerufen
+    
+    // V9.3 PATCH: Nur trennen, wenn wirklich verbunden.
+    if (gattServer.connected) {
+        diagLog('[BT] Trenne aktive GATT-Verbindung (via disconnect)...', 'bt');
+        gattServer.disconnect(); 
+        // onGattDisconnect() wird durch das Event aufgerufen
+    } else {
+        diagLog('[BT] disconnect: Ignoriert, da gattServer nicht .connected ist.', 'bt');
+    }
 }
 
 // === PUBLIC API: GATT INTERACTION ===
@@ -169,11 +185,10 @@ export async function connectToDevice(deviceId) {
     const deviceData = deviceMap.get(deviceId);
     if (!deviceData) {
         diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
-        setGattConnectingUI(false, 'Gerät nicht gefunden'); // UI zurücksetzen
+        setGattConnectingUI(false, 'Gerät nicht gefunden');
         return;
     }
     
-    // UI in "Verbinde..."-Zustand versetzen
     setGattConnectingUI(true); 
     gattCharacteristicMap.clear();
 
@@ -235,14 +250,15 @@ export async function connectToDevice(deviceId) {
             gattTree.push(serviceData);
         }
         
-        // UI benachrichtigen, dass Verbindung erfolgreich war
-        setGattConnectingUI(false, null, true); // isConnecting=false, error=null, isConnected=true
+        setGattConnectingUI(false, null, true); 
         renderGattTree(gattTree, device.name, gattSummary);
 
     } catch (err) {
         diagLog(`GATT-Verbindungsfehler: ${err.message}`, 'error');
+        // V9.3 HINWEIS: onGattDisconnect() wird jetzt aufgerufen, was
+        // gattServer auf null setzt und die UI korrekt zurücksetzt.
         onGattDisconnect(); 
-        setGattConnectingUI(false, err.message); // UI zurücksetzen mit Fehler
+        setGattConnectingUI(false, err.message);
     }
 }
 
@@ -277,3 +293,4 @@ export async function startNotifications(charUuid) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
 }
+ 
