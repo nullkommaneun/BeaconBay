@@ -1,18 +1,12 @@
 /**
- * js/bluetooth.js (Version 7 - Smart Driver mit DIS-Parsing)
+ * js/bluetooth.js (Version 8 - Inspektor-Modell)
  * * ARCHITEKTUR-HINWEIS:
- * - Ignoriert das unzuverlässige 'connectable'-Flag (der Klick-Bug).
- * - Verwendet stattdessen 'isInteresting' (hat manu/service daten) als Klick-Logik.
- * - Importiert 'KNOWN_SERVICES'/'decodeKnownCharacteristic' aus utils.js.
- * - 'connectToDevice' wurde "aufgebohrt":
- * 1. Erstellt ein 'summary'-Objekt.
- * 2. Erkennt automatisch den "Device Information Service" (0x180A).
- * 3. Liest automatisch alle bekannten Characteristics darin aus.
- * 4. Übergibt das 'summary'-Objekt an 'renderGattTree'.
+ * - 'connectToDevice' stoppt den Scan NICHT MEHR.
+ * - Das Stoppen des Scans wird jetzt von app.js (dem Dirigenten)
+ * als Reaktion auf den 'onGattConnect'-Callback gesteuert.
  */
 
 import { diagLog } from './errorManager.js';
-// Importiere die Wissensdatenbank
 import { 
     parseAdvertisementData, 
     KNOWN_SERVICES, 
@@ -46,25 +40,18 @@ const STALE_CHECK_INTERVAL_MS = 2000;
 
 function handleAdvertisement(event) {
     try {
-        // 1. Logger füttern (Logger V3.2 greift intern korrekt zu)
         logAdvertisement(event);
         
         const { device, manufacturerData, serviceData } = event;
-
-        // ==== NEUE "Klick-Logik" (ersetzt 'connectable') ====
-        // Ein Gerät ist "interessant" (potenziell verbindungsfähig),
-        // wenn es mehr als nur seinen Namen sendet.
         const isInteresting = (manufacturerData && manufacturerData.size > 0) || 
                               (serviceData && serviceData.size > 0);
         
-        // [TRACE 1]
         diagLog(`[TRACE] handleAdvertisement: Gerät ${device.id.substring(0, 4)}... hat isInteresting=${isInteresting}`, 'utils');
 
         const parsedData = parseAdvertisementData(event);
         if (!parsedData) return; 
         
-        // Wir hängen unser neues Flag an das Objekt für die UI an
-        parsedData.isConnectable = isInteresting; // (Wir behalten den Variablennamen)
+        parsedData.isConnectable = isInteresting;
         
         deviceMap.set(device.id, {
             deviceObject: device, 
@@ -72,7 +59,6 @@ function handleAdvertisement(event) {
         });
         
         updateBeaconUI(device.id, parsedData);
-
     } catch (err) {
         diagLog(`Fehler in handleAdvertisement: ${err.message}`, 'error');
     }
@@ -87,18 +73,25 @@ function checkStaleDevices() {
     });
 }
 
+/**
+ * Aufräumfunktion bei GATT-Trennung.
+ * WICHTIG: Startet den Scan NICHT neu. Das überlassen wir dem Benutzer.
+ */
 function onGattDisconnect() {
     diagLog('GATT-Verbindung getrennt.', 'bt');
     gattServer = null;
     gattCharacteristicMap.clear();
-    showView('beacon');
-    setScanStatus(false);
+    // Setzt nur die GATT-UI zurück, ändert aber nicht die Ansicht
+    setScanStatus(false); // Scan-Buttons zurücksetzen
+    // Wir könnten hier ui.resetGattView() aufrufen, um die
+    // Buttons (Connect/Disconnect) in der Inspektor-Ansicht zurückzusetzen.
 }
 
 function handleValueChange(event) {
     const charUuid = event.target.uuid;
     const value = event.target.value; 
-    const decodedValue = decodeKnownCharacteristic(charUuid, value);
+    const shortCharUuid = charUuid.startsWith("0000") ? `0x${charUuid.substring(4, 8)}` : charUuid;
+    const decodedValue = decodeKnownCharacteristic(shortCharUuid, value);
     diagLog(`[Notify] Neuer Wert für ${charUuid}: ${decodedValue}`, 'bt');
     updateCharacteristicValue(charUuid, value, false, decodedValue);
 }
@@ -161,19 +154,16 @@ export function disconnect() {
 
 // === PUBLIC API: GATT INTERACTION ===
 
+/**
+ * NEUE "DUMME" VERSION: Stoppt den Scan nicht mehr.
+ * Geht davon aus, dass der Scan bereits von app.js gestoppt wurde.
+ */
 export async function connectToDevice(deviceId) {
     diagLog(`[TRACE] connectToDevice(${deviceId.substring(0, 4)}...) in bluetooth.js gestartet.`, 'bt');
     const deviceData = deviceMap.get(deviceId);
     if (!deviceData) return diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
     
-    // (Diese Prüfung verwendet jetzt unser 'isInteresting'-Flag)
-    if (!deviceData.parsedData.isConnectable) {
-        diagLog(`[TRACE] connectToDevice: Klick auf ${deviceId.substring(0, 4)}... ignoriert (nicht 'interesting').`, 'warn');
-        return;
-    }
-
-    if (activeScan && activeScan.active) stopScan();
-    
+    // UI in Ladezustand versetzen
     showConnectingState(deviceData.parsedData.name);
     gattCharacteristicMap.clear();
 
@@ -191,7 +181,6 @@ export async function connectToDevice(deviceId) {
 
         for (const service of services) {
             const serviceUuid = service.uuid.toLowerCase();
-            // Wandle 16-Bit-UUIDs (falls vom Browser so geliefert) in 32-Bit-Strings um
             const shortUuid = serviceUuid.startsWith("0000") ? `0x${serviceUuid.substring(4, 8)}` : serviceUuid;
             const serviceName = KNOWN_SERVICES.get(shortUuid) || 'Unknown Service';
             
@@ -220,7 +209,6 @@ export async function connectToDevice(deviceId) {
                     properties: char.properties
                 });
 
-                // Automatische Ausleselogik
                 if (char.properties.read && 
                    (serviceName === 'Device Information' || serviceName === 'Battery Service')) 
                 {
@@ -241,7 +229,8 @@ export async function connectToDevice(deviceId) {
 
     } catch (err) {
         diagLog(`GATT-Verbindungsfehler: ${err.message}`, 'error');
-        onGattDisconnect();
+        onGattDisconnect(); 
+        // WICHTIG: Wir starten den Scan NICHT neu.
     }
 }
 
@@ -276,3 +265,4 @@ export async function startNotifications(charUuid) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
 }
+ 
