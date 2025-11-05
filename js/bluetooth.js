@@ -1,9 +1,10 @@
 /**
- * js/bluetooth.js (Version 9.3 - Architektur-Patch)
+ * js/bluetooth.js (Version 9.5 - GATT-Stabilitätspatch)
  * * ARCHITEKTUR-HINWEIS:
- * - Macht die Funktionen 'disconnect' und 'onGattDisconnect' robuster,
- * indem sie den Status von 'gattServer' prüfen, bevor sie darauf zugreifen.
- * - Behebt potenzielle Race-Conditions beim Trennen der Verbindung.
+ * - connectToDevice gibt jetzt 'true' bei Erfolg
+ * und 'false' bei einem Fehler zurück.
+ * - Dies ermöglicht es app.js, den Scan bei einem
+ * Verbindungsfehler (z.B. "Not authorized") neu zu starten.
  */
 
 import { diagLog } from './errorManager.js';
@@ -74,22 +75,14 @@ function checkStaleDevices() {
     });
 }
 
-/**
- * V9.3 PATCH: Robuster gemacht.
- * Prüft, ob gattServer existiert, bevor der Listener entfernt wird.
- */
 function onGattDisconnect() {
     diagLog('GATT-Verbindung getrennt.', 'bt');
-    
-    // V9.3 PATCH: Prüfen, ob gattServer existiert (verhindert Race-Condition)
     if (gattServer) {
         gattServer.device.removeEventListener('gattserverdisconnected', onGattDisconnect);
     }
-    
     gattServer = null;
     gattCharacteristicMap.clear();
-    setScanStatus(false); // Scan-Buttons zurücksetzen
-    // Sagt der UI, die GATT-Buttons zurückzusetzen
+    setScanStatus(false); 
     setGattConnectingUI(false, null); 
 }
 
@@ -118,7 +111,10 @@ export async function startScan() {
         diagLog('Scan läuft bereits.', 'warn');
         return;
     }
+    // V9.5 HINWEIS: Wichtig, damit der Neustart nach einem
+    // Verbindungsfehler den Benutzer zurück zur Scan-Liste bringt.
     showView('beacon');
+    
     setScanStatus(true);
     clearUI(); 
     deviceMap.clear(); 
@@ -157,22 +153,14 @@ export function stopScan() {
     diagLog('Scan-Ressourcen bereinigt.', 'bt');
 }
 
-/**
- * V9.3 PATCH: Robuster gemacht.
- * Diese Funktion wird jetzt von app.js aufgerufen, ohne dass app.js
- * den Verbindungsstatus kennt.
- */
 export function disconnect() {
     if (!gattServer) {
         diagLog('[BT] disconnect: Ignoriert, da gattServer null ist.', 'bt');
         return;
     }
-    
-    // V9.3 PATCH: Nur trennen, wenn wirklich verbunden.
     if (gattServer.connected) {
         diagLog('[BT] Trenne aktive GATT-Verbindung (via disconnect)...', 'bt');
         gattServer.disconnect(); 
-        // onGattDisconnect() wird durch das Event aufgerufen
     } else {
         diagLog('[BT] disconnect: Ignoriert, da gattServer nicht .connected ist.', 'bt');
     }
@@ -180,13 +168,17 @@ export function disconnect() {
 
 // === PUBLIC API: GATT INTERACTION ===
 
+/**
+ * V9.5 PATCH: Gibt jetzt 'true' oder 'false' zurück.
+ * @returns {Promise<boolean>} - True bei Erfolg, False bei Fehler.
+ */
 export async function connectToDevice(deviceId) {
     diagLog(`[TRACE] connectToDevice(${deviceId.substring(0, 4)}...) in bluetooth.js gestartet.`, 'bt');
     const deviceData = deviceMap.get(deviceId);
     if (!deviceData) {
         diagLog(`Verbindung fehlgeschlagen: Gerät ${deviceId} nicht gefunden.`, 'error');
         setGattConnectingUI(false, 'Gerät nicht gefunden');
-        return;
+        return false; // V9.5 PATCH
     }
     
     setGattConnectingUI(true); 
@@ -252,13 +244,15 @@ export async function connectToDevice(deviceId) {
         
         setGattConnectingUI(false, null, true); 
         renderGattTree(gattTree, device.name, gattSummary);
+        
+        return true; // V9.5 PATCH: Erfolg melden
 
     } catch (err) {
         diagLog(`GATT-Verbindungsfehler: ${err.message}`, 'error');
-        // V9.3 HINWEIS: onGattDisconnect() wird jetzt aufgerufen, was
-        // gattServer auf null setzt und die UI korrekt zurücksetzt.
         onGattDisconnect(); 
-        setGattConnectingUI(false, err.message);
+        setGattConnectingUI(false, err.message); 
+        
+        return false; // V9.5 PATCH: Misserfolg melden
     }
 }
 
@@ -293,4 +287,3 @@ export async function startNotifications(charUuid) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
 }
- 
