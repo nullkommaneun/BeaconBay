@@ -285,3 +285,19 @@ input[type="checkbox"] {
     background: transparent;
     box-shadow: none;
 }
+/* style.css (Auszug - Hinzufügen) */
+
+/* WIE: Visuelles Feedback für nicht-verbindungsfähige Geräte.
+  Die .beacon-card hat 'cursor: pointer'. Wir überschreiben das
+  für Karten, die von ui.js die .not-connectable-Klasse erhalten.
+*/
+.beacon-card.not-connectable {
+    cursor: default;
+    border-left-color: #555; /* Weniger prominente Farbe */
+}
+
+/* Verhindert den Hover-Effekt bei nicht-verbindungsfähigen Geräten */
+.beacon-card.not-connectable:hover {
+    border-color: #444; /* Standard-Randfarbe beibehalten */
+    box-shadow: none;
+}
