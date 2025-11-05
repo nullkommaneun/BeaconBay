@@ -1,10 +1,10 @@
 /**
- * js/bluetooth.js (Version 9.8 - "No-Filter" Handshake-Test)
+ * js/bluetooth.js (Version 9.9 - "Ultimate Stability" Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - requestDeviceForHandshake verwendet jetzt 'acceptAllDevices: true'
- * und KEINE Filter mehr.
- * - Dies ist der ultimative Test, ob der Browser-Dialog (Handy)
- * überhaupt funktioniert.
+ * - Akzeptiert Callbacks in initBluetooth().
+ * - onGattDisconnect ruft jetzt den app.js-Callback 'onGattDisconnected' auf.
+ * - Dies stellt sicher, dass app.js den Scan neu starten kann,
+ * wenn die Verbindung unerwartet abbricht.
  */
 
 import { diagLog } from './errorManager.js';
@@ -32,6 +32,7 @@ let staleCheckInterval = null;
 let activeScan = null;
 let gattServer = null;
 let gattCharacteristicMap = new Map();
+let appCallbacks = {}; // V9.9 NEU: Callbacks vom Dirigenten (app.js)
 
 // === KONSTANTEN ===
 const STALE_DEVICE_THRESHOLD_MS = 10000;
@@ -70,8 +71,10 @@ function checkStaleDevices() {
     });
 }
 
+/**
+ * V9.9 PATCH: Ruft jetzt den Dirigenten-Callback auf.
+ */
 function onGattDisconnect() {
-    // ... (unverändert)
     diagLog('GATT-Verbindung getrennt.', 'bt');
     if (gattServer) {
         gattServer.device.removeEventListener('gattserverdisconnected', onGattDisconnect);
@@ -79,7 +82,12 @@ function onGattDisconnect() {
     gattServer = null;
     gattCharacteristicMap.clear();
     setScanStatus(false); 
-    setGattConnectingUI(false, null); 
+    setGattConnectingUI(false, null);
+    
+    // V9.9 PATCH: Sage dem Dirigenten (app.js) Bescheid!
+    if (appCallbacks.onGattDisconnected) {
+        appCallbacks.onGattDisconnected();
+    }
 }
 
 function handleValueChange(event) {
@@ -94,8 +102,11 @@ function handleValueChange(event) {
 
 // === PUBLIC API: SCAN & BASE CONNECT ===
 
-export function initBluetooth() {
-    // ... (unverändert)
+/**
+ * V9.9 PATCH: Akzeptiert Callbacks von app.js
+ */
+export function initBluetooth(callbacks) {
+    appCallbacks = callbacks; // Speichere die Callbacks
     deviceMap.clear();
     gattCharacteristicMap.clear();
     if (staleCheckInterval) clearInterval(staleCheckInterval);
@@ -158,30 +169,27 @@ export function disconnect() {
     }
     if (gattServer.connected) {
         diagLog('[BT] Trenne aktive GATT-Verbindung (via disconnect)...', 'bt');
-        gattServer.disconnect(); 
+        gattServer.disconnect(); // Dies löst onGattDisconnect aus
     } else {
         diagLog('[BT] disconnect: Ignoriert, da gattServer nicht .connected ist.', 'bt');
     }
 }
 
-// === PUBLIC API: GATT INTERACTION (V9.8 PATCH) ===
+// === PUBLIC API: GATT INTERACTION (V9.8 Logik) ===
 
 /**
- * V9.8 NEU: Phase 1 - Führt Handshake OHNE FILTER durch.
- * Geht davon aus, dass der Scan (in app.js) bereits gestoppt wurde.
- * @returns {Promise<BluetoothDevice | null>} - Das autorisierte Gerät oder null.
+ * V9.8: Phase 1 - Führt Handshake OHNE FILTER durch.
  */
 export async function requestDeviceForHandshake() {
     diagLog('[Handshake V9.8] Starte "acceptAllDevices"-Handshake...', 'bt');
     
-    // UI in "Verbinde..."-Zustand versetzen, während Pop-up offen ist
     setGattConnectingUI(true); 
 
     try {
         diagLog('[Handshake V9.8] Fordere Erlaubnis für ALLE Geräte an...', 'bt');
         
         const device = await navigator.bluetooth.requestDevice({
-            acceptAllDevices: true, // V9.8 TEST: KEINE FILTER
+            acceptAllDevices: true, 
             optionalServices: [
                 '0000180a-0000-1000-8000-00805f9b34fb', // Device Information
                 '0000180f-0000-1000-8000-00805f9b34fb'  // Battery Service
@@ -189,36 +197,30 @@ export async function requestDeviceForHandshake() {
         });
         
         diagLog(`[Handshake V9.8] Erlaubnis erteilt für: ${device.name}`, 'bt');
-        return device; // Gibt das autorisierte Gerät zurück
+        return device; 
 
     } catch (err) {
         diagLog(`[Handshake V9.8] FEHLER: ${err.message}`, 'error');
         if (err.name === 'NotFoundError' || err.name === 'NotAllowedError') {
              diagLog('Handshake vom Benutzer abgelehnt oder kein Gerät ausgewählt.', 'warn');
         }
-        return null; // Gibt null bei Fehler/Ablehnung zurück
+        return null; 
     }
 }
 
 /**
- * V9.8: Phase 2 - Unverändert gegenüber V9.7
- * Nimmt ein autorisiertes Gerät und führt die GATT-Verbindung durch.
- * @param {BluetoothDevice} device - Das autorisierte Gerät von requestDeviceForHandshake.
- * @returns {Promise<boolean>} - True bei Erfolg, False bei Fehler.
+ * V9.8: Phase 2 - Verbindet mit autorisiertem Gerät.
  */
 export async function connectWithAuthorizedDevice(device) {
     diagLog(`[TRACE] connectWithAuthorizedDevice(${device.name}) gestartet.`, 'bt');
     
-    // UI ist bereits im "Verbinde..."-Zustand von Phase 1
     gattCharacteristicMap.clear();
 
     try {
-        // 1. Mit dem autorisierten 'device'-Objekt verbinden
         device.addEventListener('gattserverdisconnected', onGattDisconnect);
         gattServer = await device.gatt.connect();
         diagLog('GATT-Server verbunden. Lese Services...', 'bt');
         
-        // 2. Service Discovery (wie bisher)
         const services = await gattServer.getPrimaryServices();
         diagLog(`Services gefunden: ${services.length}`, 'bt');
         
@@ -272,7 +274,6 @@ export async function connectWithAuthorizedDevice(device) {
             gattTree.push(serviceData);
         }
         
-        // 3. Erfolg (wie bisher)
         setGattConnectingUI(false, null, true); 
         renderGattTree(gattTree, device.name, gattSummary);
         
@@ -280,7 +281,7 @@ export async function connectWithAuthorizedDevice(device) {
 
     } catch (err) {
         diagLog(`GATT-Verbindungsfehler: ${err.message}`, 'error');
-        onGattDisconnect(); 
+        onGattDisconnect(); // V9.9 WICHTIG: Dies löst den Callback aus!
         setGattConnectingUI(false, err.message); 
         
         return false; // Misserfolg melden
@@ -321,4 +322,3 @@ export async function startNotifications(charUuid) {
         diagLog(`Fehler beim Starten von Notifications: ${err.message}`, 'error');
     }
 }
- 
