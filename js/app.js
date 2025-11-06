@@ -1,12 +1,12 @@
 /**
- * js/app.js (Version 11.5 - "Robuster Logger" Patch)
+ * js/app.js (Version 12.1 - "Permission Race" Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - V11.5 FIX: Importiert 'errorManager.js' GANZ OBEN (global).
- * - Initialisiert 'diagLog' und 'initGlobalErrorHandler' sofort.
- * - Alle anderen Module werden jetzt *innerhalb* des try-Blocks
- * von initApp() geladen.
- * - Dies stellt sicher, dass, WENN ein Modul (wie ui.js)
- * beim Import abstürzt, wir den Fehler im Diagnose-Panel sehen.
+ * - V12.1 FIX: 'scanAction' ist jetzt 'async'.
+ * - V12.1: 'startScan()' wird ZUERST aufgerufen (await),
+ * um die Benutzergeste (Klick) für die Bluetooth-Berechtigung zu nutzen.
+ * - 'startKeepAlive()' wird DANACH aufgerufen (nur bei Erfolg),
+ * da die Standortberechtigung dann bereits erteilt wurde.
+ * - (Basiert auf V11.5 "Robust Logger")
  */
 
 // Heartbeat
@@ -22,10 +22,8 @@ initGlobalErrorHandler(); // Installiere globale Handler sofort
  */
 function appInitLogger(msg, level = 'bootstrap') {
     try {
-        // Nutze das volle diagLog, wenn es bereits existiert
         diagLog(msg, level);
     } catch (e) {
-        // Fallback auf das statische earlyDiagLog
         earlyDiagLog(msg, level === 'error');
     }
 }
@@ -44,7 +42,6 @@ async function initApp() {
 
     try {
         // --- Dynamisches Laden der Module ---
-        // errorManager.js ist bereits geladen.
         
         appInitLogger('Lade Layer 1 (browser.js)...', 'utils');
         const browserModule = await import('./browser.js');
@@ -62,7 +59,7 @@ async function initApp() {
         generateLogFile = loggerModule.generateLogFile;
         
         appInitLogger('Lade Layer 2 (ui.js)... (Potenzieller Absturzpunkt)', 'utils');
-        const uiModule = await import('./ui.js'); // <-- Hier stürzt es wahrscheinlich ab
+        const uiModule = await import('./ui.js');
         appInitLogger('Layer 2 (ui.js) erfolgreich geladen.', 'info');
         
         setupUIListeners = uiModule.setupUIListeners;
@@ -87,10 +84,22 @@ async function initApp() {
         // --- Callbacks definieren (Dependency Inversion) ---
         appInitLogger('Verbinde UI-Listener...', 'info');
 
-        const scanAction = () => {
+        /**
+         * V12.1 PATCH: Reihenfolge der Aufrufe korrigiert.
+         */
+        const scanAction = async () => { // V12.1: Make async
             diagLog("Aktion: Scan gestartet (via app.js)", "bt");
-            startKeepAlive();
-            startScan();
+            
+            // V12.1 PATCH: Rufe startScan() ZUERST auf.
+            // Dies verbraucht die "Benutzergeste" (Klick) für die
+            // Bluetooth-Berechtigungsanfrage.
+            const scanStarted = await startScan(); // V12.1: 'await' und 'scanStarted'
+            
+            // V12.1: Starte den Keep-Alive NUR, wenn der Scan
+            // erfolgreich gestartet wurde (d.h. Berechtigung erteilt).
+            if (scanStarted) {
+                startKeepAlive();
+            }
         };
 
         const stopScanAction = () => {
@@ -235,7 +244,6 @@ async function initApp() {
         window.__app_heartbeat = true;
 
     } catch (err) {
-        // Dieser 'catch' fängt jetzt den Import-Fehler von ui.js ab
         const errorMsg = `FATALER APP-LADEFEHLER: ${err.message}.`;
         appInitLogger(errorMsg, 'error');
         console.error(errorMsg, err);
