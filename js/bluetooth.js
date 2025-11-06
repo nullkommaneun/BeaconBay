@@ -1,12 +1,11 @@
 /**
- * js/bluetooth.js (Version 9.14 - "Smart Filter" Patch)
+ * js/bluetooth.js (Version 12.1 - "Permission Race" Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - Implementiert den "Goldstandard"-Filter.
- * - requestDeviceForHandshake holt sich den deviceLog.
- * - Wenn 'serviceData'-UUIDs im Log vorhanden sind, wird
- * danach gefiltert (filters: [{ services: [...] }]).
- * - Wenn (wie beim Flipper) keine Services geloggt wurden,
- * wird auf 'acceptAllDevices: true' zurückgefallen.
+ * - V12.1: startScan() gibt jetzt 'true' (bei Erfolg) oder
+ * 'false' (bei Fehler/Ablehnung) zurück.
+ * - Dies ermöglicht es app.js (V12.1), den Keep-Alive
+ * erst NACH dem erfolgreichen Scan-Start zu aktivieren.
+ * - (Basiert auf V11.7/V11.9)
  */
 
 import { diagLog } from './errorManager.js';
@@ -16,8 +15,6 @@ import {
     KNOWN_CHARACTERISTICS, 
     decodeKnownCharacteristic 
 } from './utils.js';
-// V9.14 HINWEIS: Wir brauchen getDeviceLog, das über app.js an initBluetooth
-// und dann an appCallbacks übergeben wird.
 import { logAdvertisement, setScanStart, init as initLogger } from './logger.js';
 import { 
     setScanStatus, 
@@ -36,7 +33,7 @@ let staleCheckInterval = null;
 let activeScan = null;
 let gattServer = null;
 let gattCharacteristicMap = new Map();
-let appCallbacks = {}; // (V9.9)
+let appCallbacks = {}; 
 
 // === KONSTANTEN ===
 const STALE_DEVICE_THRESHOLD_MS = 10000;
@@ -45,7 +42,7 @@ const STALE_CHECK_INTERVAL_MS = 2000;
 // === PRIVATE HELPER: SCANNING ===
 
 /**
- * V9.12 PATCH: 'isInteresting'-Logik entfernt.
+ * V11.9: 'isInteresting'-Logik entfernt.
  */
 function handleAdvertisement(event) {
     try {
@@ -70,7 +67,6 @@ function handleAdvertisement(event) {
 }
 
 function checkStaleDevices() {
-    // ... (unverändert)
     const now = Date.now();
     deviceMap.forEach((data, deviceId) => {
         if (now - data.parsedData.lastSeen > STALE_DEVICE_THRESHOLD_MS) {
@@ -80,7 +76,6 @@ function checkStaleDevices() {
 }
 
 function onGattDisconnect() {
-    // ... (unverändert)
     diagLog('GATT-Verbindung getrennt.', 'bt');
     if (gattServer) {
         gattServer.device.removeEventListener('gattserverdisconnected', onGattDisconnect);
@@ -90,13 +85,13 @@ function onGattDisconnect() {
     setScanStatus(false); 
     setGattConnectingUI(false, null);
     
+    // V9.9
     if (appCallbacks.onGattDisconnected) {
         appCallbacks.onGattDisconnected();
     }
 }
 
 function handleValueChange(event) {
-    // ... (unverändert)
     const charUuid = event.target.uuid;
     const value = event.target.value; 
     const shortCharUuid = charUuid.startsWith("0000") ? `0x${charUuid.substring(4, 8)}` : charUuid;
@@ -108,8 +103,7 @@ function handleValueChange(event) {
 // === PUBLIC API: SCAN & BASE CONNECT ===
 
 export function initBluetooth(callbacks) {
-    // ... (unverändert)
-    appCallbacks = callbacks;
+    appCallbacks = callbacks; 
     deviceMap.clear();
     gattCharacteristicMap.clear();
     if (staleCheckInterval) clearInterval(staleCheckInterval);
@@ -118,11 +112,14 @@ export function initBluetooth(callbacks) {
     diagLog('Bluetooth-Modul initialisiert (Maps geleert).', 'bt');
 }
 
+/**
+ * V12.1 PATCH: Gibt jetzt 'true' oder 'false' zurück.
+ * @returns {Promise<boolean>}
+ */
 export async function startScan() {
-    // ... (unverändert)
     if (activeScan && activeScan.active) {
         diagLog('Scan läuft bereits.', 'warn');
-        return;
+        return true; // Gilt als Erfolg
     }
     showView('beacon');
     setScanStatus(true);
@@ -133,19 +130,22 @@ export async function startScan() {
         activeScan = await navigator.bluetooth.requestLEScan({
             acceptAllAdvertisements: true, 
         });
+        
         diagLog('Scan aktiv. Warte auf Advertisements...', 'bt');
         setScanStart();
         navigator.bluetooth.addEventListener('advertisementreceived', handleAdvertisement);
         staleCheckInterval = setInterval(checkStaleDevices, STALE_CHECK_INTERVAL_MS);
+        return true; // V12.1: Erfolg melden
+
     } catch (err) {
         diagLog(err.name === 'NotAllowedError' ? 'Scan vom Benutzer abgelehnt.' : `Scan-Fehler: ${err.message}`, 'error');
         setScanStatus(false);
         activeScan = null;
+        return false; // V12.1: Misserfolg melden
     }
 }
 
 export function stopScan() {
-    // ... (unverändert)
     navigator.bluetooth.removeEventListener('advertisementreceived', handleAdvertisement);
     if (activeScan && activeScan.active) {
         try {
@@ -165,37 +165,31 @@ export function stopScan() {
 }
 
 export function disconnect() {
-    // ... (unverändert)
     if (!gattServer) {
         diagLog('[BT] disconnect: Ignoriert, da gattServer null ist.', 'bt');
         return;
     }
     if (gattServer.connected) {
         diagLog('[BT] Trenne aktive GATT-Verbindung (via disconnect)...', 'bt');
-        gattServer.disconnect(); // Dies löst onGattDisconnect aus
+        gattServer.disconnect(); 
     } else {
         diagLog('[BT] disconnect: Ignoriert, da gattServer nicht .connected ist.', 'bt');
     }
 }
 
-// === PUBLIC API: GATT INTERACTION (V9.14 PATCH) ===
+// === PUBLIC API: GATT INTERACTION (V11.9 / V11.10) ===
 
 /**
- * V9.14 (PATCH): Implementiert "Smart Filter".
- * Filtert nach geloggten Service-UUIDs oder fällt auf 'acceptAllDevices' zurück.
- * @param {string} deviceId - Die ID des Geräts, das verbunden werden soll.
- * @returns {Promise<BluetoothDevice | null>} - Das autorisierte Gerät oder null.
+ * V11.9 PATCH: Implementiert "Smart Filter".
  */
 export async function requestDeviceForHandshake(deviceId) {
     diagLog(`[Handshake V9.14] Starte "Smart Filter" für ${deviceId.substring(0, 4)}...`, 'bt');
     
-    // UI in "Verbinde..."-Zustand versetzen
     setGattConnectingUI(true); 
 
-    // 1. Hole die Log-Daten, um zu entscheiden, WIE wir filtern
     if (!appCallbacks.onGetDeviceLog) {
          diagLog(`[Handshake V9.14] FATALER FEHLER: appCallbacks.onGetDeviceLog fehlt.`, 'error');
-         return null; // Dies sollte nicht passieren, wenn V9.9/V9.11-app.js geladen ist
+         return null;
     }
     
     const deviceLog = appCallbacks.onGetDeviceLog(deviceId);
@@ -204,7 +198,6 @@ export async function requestDeviceForHandshake(deviceId) {
          return null;
     }
 
-    // 2. Baue die Filter-Optionen
     const requestOptions = {
         optionalServices: [
             '0000180a-0000-1000-8000-00805f9b34fb', // Device Information
@@ -212,24 +205,20 @@ export async function requestDeviceForHandshake(deviceId) {
         ]
     };
     
-    // 2a. Extrahiere Service-UUIDs aus dem Log
     const serviceUuids = deviceLog.uniqueAdvertisements
         .filter(ad => ad.type === 'serviceData' && ad.serviceUuid)
-        .map(ad => ad.serviceUuid); // z.B. ['0xfe9f', '0x180f']
+        .map(ad => ad.serviceUuid); 
 
     if (serviceUuids.length > 0) {
-        // Fall A: Wir haben Services! (Industrie-Ziel)
         diagLog(`[Handshake V9.14] Filtert nach Services: ${serviceUuids.join(', ')}`, 'bt');
         requestOptions.filters = [{
             services: serviceUuids
         }];
     } else {
-        // Fall B: Keine Services gefunden (Flipper). Fallback auf "No-Filter".
         diagLog(`[Handshake V9.14] KEINE Services gefunden für ${deviceLog.name}. Fallback auf 'acceptAllDevices'.`, 'warn');
         requestOptions.acceptAllDevices = true;
     }
 
-    // 3. Führe den Handshake mit den "smarten" Optionen durch
     try {
         diagLog(`[Handshake V9.14] Fordere Gerät an mit Optionen: ${JSON.stringify(requestOptions)}`, 'bt');
         
@@ -248,9 +237,7 @@ export async function requestDeviceForHandshake(deviceId) {
 }
 
 /**
- * V9.14: Phase 2 - Unverändert. Verbindet mit autorisiertem Gerät.
- * @param {BluetoothDevice} device - Das autorisierte Gerät von requestDeviceForHandshake.
- * @returns {Promise<boolean>} - True bei Erfolg, False bei Fehler.
+ * V11: Verbindet mit autorisiertem Gerät.
  */
 export async function connectWithAuthorizedDevice(device) {
     diagLog(`[TRACE] connectWithAuthorizedDevice(${device.name}) gestartet.`, 'bt');
@@ -289,7 +276,7 @@ export async function connectWithAuthorizedDevice(device) {
             for (const char of characteristics) {
                 const charUuid = char.uuid.toLowerCase();
                 const shortCharUuid = charUuid.startsWith("0000") ? `0x${charUuid.substring(4, 8)}` : charUuid;
-                const charName = KNOWN_CHARACTERISTICS.get(shortUuid) || 'Unknown Characteristic';
+                const charName = KNOWN_CHARACTERISTICS.get(shortCharUuid) || 'Unknown Characteristic';
                 
                 gattCharacteristicMap.set(charUuid, char);
                 serviceData.characteristics.push({
@@ -331,7 +318,6 @@ export async function connectWithAuthorizedDevice(device) {
 
 
 export async function readCharacteristic(charUuid) {
-    // ... (unverändert)
     const char = gattCharacteristicMap.get(charUuid);
     if (!char || !char.properties.read) {
         return diagLog(`Lesefehler: Char ${charUuid} nicht gefunden oder nicht lesbar.`, 'error');
@@ -347,8 +333,28 @@ export async function readCharacteristic(charUuid) {
     }
 }
 
+/**
+ * V10
+ */
+export async function writeCharacteristic(charUuid, dataBuffer) {
+    const char = gattCharacteristicMap.get(charUuid);
+    if (!char) {
+        return diagLog(`Schreibfehler: Char ${charUuid} nicht gefunden.`, 'error');
+    }
+    if (!char.properties.write && !char.properties.writeWithoutResponse) {
+        return diagLog(`Schreibfehler: Char ${charUuid} ist nicht beschreibbar.`, 'error');
+    }
+
+    try {
+        diagLog(`Schreibe ${dataBuffer.byteLength} bytes auf ${charUuid}...`, 'bt');
+        await char.writeValue(dataBuffer);
+        diagLog("Schreiben erfolgreich.", 'bt');
+    } catch (err) {
+        diagLog(`GATT-Schreibfehler: ${err.message}`, 'error');
+    }
+}
+
 export async function startNotifications(charUuid) {
-    // ... (unverändert)
     const char = gattCharacteristicMap.get(charUuid);
     if (!char || !(char.properties.notify || char.properties.indicate)) {
         return diagLog(`Notify-Fehler: Char ${charUuid} nicht gefunden oder nicht abonnierbar.`, 'error');
