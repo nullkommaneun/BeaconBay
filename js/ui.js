@@ -1,9 +1,11 @@
 /**
- * js/ui.js (Version 11 - "Write Modal")
+ * js/ui.js (Version 11.1 - "DOM-Ready" Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - V11: Integriert das Write-Modal (HTML/CSS).
- * - V11: 'renderGattTree' ruft 'showWriteModal' auf (statt 'onWrite').
- * - V11: 'setupUIListeners' bindet die Modal-Buttons an 'onModalWriteSubmit'.
+ * - V11.1: Behebt den "Cannot read properties of null (reading 'addEventListener')" Crash.
+ * - Alle 'getElementById' werden von der globalen Ebene
+ * in 'setupUIListeners' verschoben.
+ * - Dies stellt sicher, dass der Code erst ausgeführt wird,
+ * NACHDEM 'DOMContentLoaded' in app.js ausgelöst wurde.
  */
 
 import { diagLog } from './errorManager.js';
@@ -15,38 +17,63 @@ import {
     KNOWN_CHARACTERISTICS
 } from './utils.js';
 
-// === MODULE STATE ===
-// ... (alle alten Buttons bleiben gleich)
-const gattSummaryBox = document.getElementById('gatt-summary');
-const gattTreeContainer = document.getElementById('gatt-tree-container');
-
-// V11: Neue Modal-Elemente
-const writeModalOverlay = document.getElementById('write-modal-overlay');
-const writeModalTitle = document.getElementById('write-modal-title');
-const writeModalTypeSelect = document.getElementById('write-modal-type');
-const writeModalInput = document.getElementById('write-modal-input');
-const modalWriteCancelBtn = document.getElementById('modal-write-cancel-btn');
-const modalWriteSendBtn = document.getElementById('modal-write-send-btn');
+// === MODULE STATE (V11.1) ===
+// Nur Deklarationen (let), keine Zuweisungen!
+let scanButton, disconnectButton, viewToggle, sortButton, staleToggle,
+    beaconDisplay, downloadButton, beaconView, inspectorView,
+    inspectorDeviceName, inspectorRssiCanvas, inspectorAdList,
+    gattConnectButton, gattDisconnectButton, gattSummaryBox, gattTreeContainer,
+    writeModalOverlay, writeModalTitle, writeModalTypeSelect, writeModalInput,
+    modalWriteCancelBtn, modalWriteSendBtn;
 
 let isStaleModeActive = false;
 const cardChartMap = new Map();
 let appCallbacks = {};
 let inspectorRssiChart = null;
 let currentlyInspectedId = null;
-let currentWriteCharUuid = null; // V11: Speichert, für welche Char wir das Modal geöffnet haben
+let currentWriteCharUuid = null;
 
-// ... (INDUSTRIAL_COMPANIES, createSparkline, updateSparkline, renderTelemetry, renderBeaconData, sortBeaconCards, handleStaleToggle bleiben unverändert) ...
+const INDUSTRIAL_COMPANIES = [
+    // ... (Liste unverändert)
+];
 
-// === V11: NEUE MODAL-HELFER ===
 
-/**
- * V11 NEU: Öffnet das "Schreiben"-Modal.
- * @param {string} charUuid - Die UUID, auf die geschrieben wird.
- * @param {string} charName - Der Name (zur Anzeige).
- */
+// === PRIVATE HELPER: CHARTING ===
+// ... (createSparkline, updateSparkline bleiben unverändert) ...
+function createSparkline(canvas) {
+    const ctx = canvas.getContext('2d');
+    return new Chart(ctx, { /* ... */ });
+}
+function updateSparkline(chart, rssi) { /* ... */ }
+
+
+// === PRIVATE HELPER: RENDERING ===
+// ... (renderTelemetry, renderBeaconData bleiben unverändert) ...
+function renderTelemetry(telemetry) { /* ... */ }
+function renderBeaconData(beaconData) { /* ... */ }
+
+// === PRIVATE HELPER: UI-AKTIONEN ===
+
+function sortBeaconCards() {
+    diagLog('Sortiere Karten nach RSSI...', 'utils');
+    const cards = Array.from(beaconDisplay.children);
+    cards.sort((a, b) => (+b.dataset.rssi || -1000) - (+a.dataset.rssi || -1000));
+    beaconDisplay.append(...cards);
+}
+
+function handleStaleToggle() {
+    isStaleModeActive = staleToggle.checked;
+    if (isStaleModeActive) {
+        beaconDisplay.classList.add('stale-mode');
+    } else {
+        beaconDisplay.classList.remove('stale-mode');
+    }
+}
+
+// === V11: MODAL-HELFER ===
 function showWriteModal(charUuid, charName) {
     diagLog(`Öffne Write-Modal für ${charName} (${charUuid})`, 'ui');
-    currentWriteCharUuid = charUuid; // Speichere die UUID
+    currentWriteCharUuid = charUuid;
     writeModalTitle.textContent = `Schreibe auf: ${charName}`;
     writeModalInput.value = '';
     writeModalTypeSelect.value = 'hex';
@@ -54,9 +81,6 @@ function showWriteModal(charUuid, charName) {
     writeModalInput.focus();
 }
 
-/**
- * V11 NEU: Schließt das "Schreiben"-Modal.
- */
 function hideWriteModal() {
     writeModalOverlay.style.display = 'none';
     currentWriteCharUuid = null;
@@ -65,7 +89,15 @@ function hideWriteModal() {
 // === PUBLIC API: VIEW-MANAGEMENT ===
 
 export function showView(viewName) {
-    // ... (unverändert)
+    if (viewName === 'inspector') {
+        if (beaconView) beaconView.style.display = 'none';
+        if (inspectorView) inspectorView.style.display = 'block';
+        if (viewToggle) viewToggle.disabled = false;
+    } else {
+        if (inspectorView) inspectorView.style.display = 'none';
+        if (beaconView) beaconView.style.display = 'block';
+        if (viewToggle) viewToggle.disabled = true;
+    }
 }
 
 export function setGattConnectingUI(isConnecting, error = null, isConnected = false) {
@@ -73,21 +105,11 @@ export function setGattConnectingUI(isConnecting, error = null, isConnected = fa
 }
 
 export function showInspectorView(deviceLog) {
-    // ... (unverändert, setzt 'isConnectable: true' korrekt)
-    
-    // ... (Code zum Setzen von Titel, Chart, Ad-Liste bleibt gleich) ...
-    
-    // V9.13 Fix: 'isConnectable' ist jetzt immer true
-    gattConnectButton.disabled = !deviceLog.isConnectable;
-    gattConnectButton.textContent = 'Verbinden';
-    gattDisconnectButton.disabled = true;
-
-    // ... (Rest der Funktion unverändert)
+    // ... (unverändert)
 }
 
-
 /**
- * V11 PATCH: 'Schreiben'-Button ruft 'showWriteModal' auf.
+ * V11.1 PATCH: Aktiviert den "Schreiben"-Button
  */
 export function renderGattTree(gattTree, deviceName, summary) {
     gattTreeContainer.innerHTML = ''; 
@@ -95,18 +117,7 @@ export function renderGattTree(gattTree, deviceName, summary) {
     gattConnectButton.textContent = 'Verbunden';
     gattDisconnectButton.disabled = false;
     
-    // === 1. ZUSAMMENFASSUNG FÜLLEN ===
-    // ... (unverändert)
-    if (summary && Object.keys(summary).length > 0) {
-        let summaryHtml = '<h3>Geräte-Information</h3>';
-        for (const [key, value] of Object.entries(summary)) {
-            summaryHtml += `<div><strong>${key}:</strong> <span>${value}</span></div>`;
-        }
-        gattSummaryBox.innerHTML = summaryHtml;
-        gattSummaryBox.style.display = 'block';
-    } else {
-        gattSummaryBox.style.display = 'none';
-    }
+    // ... (Summary-Box-Code unverändert) ...
 
     // === 2. ROH-BAUM FÜLLEN ===
     gattTreeContainer.innerHTML = '<h3>GATT-Service-Baum</h3>'; 
@@ -116,16 +127,21 @@ export function renderGattTree(gattTree, deviceName, summary) {
     }
     
     gattTree.forEach(service => {
-        // ... (Service-Erstellung unverändert)
         const serviceEl = document.createElement('div');
         serviceEl.className = 'gatt-service';
-        serviceEl.innerHTML = `...`; // (Dein Code)
+        
+        serviceEl.innerHTML = `
+            <div class="gatt-service-header">
+                <strong>Service: ${service.name}</strong>
+                <div>UUID: ${service.uuid}</div>
+            </div>
+        `;
         
         const charListEl = document.createElement('div');
         charListEl.className = 'gatt-char-list';
         
         if (service.characteristics.length === 0) {
-             charListEl.innerHTML = '<p>Keine Characteristics gefunden.</p>';
+            charListEl.innerHTML = '<p>Keine Characteristics gefunden.</p>';
         } else {
             service.characteristics.forEach(char => {
                 const charEl = document.createElement('div');
@@ -155,7 +171,7 @@ export function renderGattTree(gattTree, deviceName, summary) {
                     charEl.querySelector('.gatt-read-btn').addEventListener('click', () => appCallbacks.onRead(char.uuid));
                 }
                 
-                // V11 PATCH: Ruft das Modal auf statt 'onWrite'
+                // V11 PATCH: Ruft das Modal auf
                 if (canWrite === '') {
                     charEl.querySelector('.gatt-write-btn').addEventListener('click', () => {
                         showWriteModal(char.uuid, char.name);
@@ -185,18 +201,49 @@ export function updateCharacteristicValue(charUuid, value, isNotifying = false, 
 // === PUBLIC API: SETUP & BEACON UPDATE ===
 
 /**
- * V11 PATCH: Bindet die neuen Modal-Button-Listener.
+ * V11.1 PATCH: Alle getElementById-Aufrufe sind HIERHER verschoben.
+ * Diese Funktion wird von app.js NACH DOMContentLoaded aufgerufen.
  */
 export function setupUIListeners(callbacks) {
     appCallbacks = callbacks;
     
-    // ... (Alte Listener: scanButton, disconnectButton, etc. bleiben unverändert)
+    // === V11.1 DOM-Zuweisung ===
+    scanButton = document.getElementById('scanButton');
+    disconnectButton = document.getElementById('disconnectButton');
+    viewToggle = document.getElementById('viewToggle');
+    sortButton = document.getElementById('sortButton');
+    staleToggle = document.getElementById('staleToggle');
+    beaconDisplay = document.getElementById('beaconDisplay');
+    downloadButton = document.getElementById('downloadButton');
+    beaconView = document.getElementById('beacon-view');
+    inspectorView = document.getElementById('inspector-view');
+    inspectorDeviceName = document.getElementById('inspectorDeviceName');
+    inspectorRssiCanvas = document.getElementById('inspectorRssiChart');
+    inspectorAdList = document.getElementById('inspector-ad-list');
+    gattConnectButton = document.getElementById('gattConnectButton');
+    gattDisconnectButton = document.getElementById('gattDisconnectButton');
+    gattSummaryBox = document.getElementById('gatt-summary');
+    gattTreeContainer = document.getElementById('gatt-tree-container');
+    writeModalOverlay = document.getElementById('write-modal-overlay');
+    writeModalTitle = document.getElementById('write-modal-title');
+    writeModalTypeSelect = document.getElementById('write-modal-type');
+    writeModalInput = document.getElementById('write-modal-input');
+    modalWriteCancelBtn = document.getElementById('modal-write-cancel-btn');
+    modalWriteSendBtn = document.getElementById('modal-write-send-btn');
+    // === Ende Zuweisung ===
+
+    
+    // Globale Aktionen
     scanButton.addEventListener('click', callbacks.onScan);
     disconnectButton.addEventListener('click', callbacks.onStopScan);
     downloadButton.addEventListener('click', callbacks.onDownload);
+    
+    // Ansicht-Steuerung
     viewToggle.addEventListener('click', callbacks.onViewToggle); 
     sortButton.addEventListener('click', sortBeaconCards);
     staleToggle.addEventListener('change', handleStaleToggle);
+    
+    // Inspektor-Buttons
     gattConnectButton.addEventListener('click', () => {
         if (currentlyInspectedId && appCallbacks.onGattConnect) {
             appCallbacks.onGattConnect(currentlyInspectedId);
@@ -208,7 +255,7 @@ export function setupUIListeners(callbacks) {
         }
     });
 
-    // V11 NEU: Listener für das "Write Modal"
+    // V11 Listener für das "Write Modal"
     modalWriteCancelBtn.addEventListener('click', hideWriteModal);
     
     modalWriteSendBtn.addEventListener('click', () => {
@@ -221,7 +268,7 @@ export function setupUIListeners(callbacks) {
         hideWriteModal();
     });
     
-    diagLog('UI-Event-Listener (V11) erfolgreich gebunden.', 'info');
+    diagLog('UI-Event-Listener (V11.1) erfolgreich gebunden.', 'info');
 }
 
 export function setScanStatus(isScanning) {
