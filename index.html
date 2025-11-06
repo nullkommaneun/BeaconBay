@@ -3,99 +3,109 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BeaconBay - Web BLE Analyzer</title>
-    <link rel="stylesheet" href="style.css">
+    <title>BeaconBay - Profi BLE Scanner</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="favicon.ico" type="image/x-icon">
 </head>
 <body>
 
     <header>
-        <h1>🚀 BeaconBay</h1>
-        <div class="controls">
-            <button id="scanButton">Scan Starten</button>
-            <button id="disconnectButton" disabled>Scan Stoppen</button>
-        </div>
+        <h1><span class="logo-rocket">🚀</span>BeaconBay</h1>
     </header>
 
-    <nav class="toolbar">
-        <div class="toolbar-group">
-            <button id="viewToggle" title="Zurück zur Scan-Ansicht">
-                Beacon-Ansicht
-            </button>
-            <button id="sortButton" title="Nach Signalstärke (RSSI) sortieren">
-                Sortieren 📶
-            </button>
-        </div>
-        <div class="toolbar-group">
-            <button id="downloadButton" title="Scan-Protokoll herunterladen">
-                Log Herunterladen 💾
-            </button>
-        </div>
-        <div class="toolbar-group">
-            <input type="checkbox" id="staleToggle">
-            <label for="staleToggle">Inaktive Geräte ausblenden</label>
-        </div>
-    </nav>
-
-    <main id="view-container">
-        
-        <div id="inspector-view" style="display: none;">
+    <main>
+        <nav class="control-panel">
+            <button id="scanButton" class="btn btn-primary">Scan Starten</button>
+            <button id="disconnectButton" class="btn btn-secondary" disabled>Scan Stoppen</button>
+            <button id="downloadButton" class="btn">Log Herunterladen 💾</button>
+            <button id="sortButton" class="btn">Sortieren 📶</button>
             
-            <div class="inspector-header">
-                <h2 id="inspectorDeviceName">Geräte-Inspektor</h2>
-                <div class="controls">
-                    <button id="gattConnectButton">Verbinden</button>
-                    <button id="gattDisconnectButton" disabled>Trennen</button>
-                </div>
+            <div class="toggle-group">
+                <input type="checkbox" id="staleToggle" class="stale-toggle">
+                <label for="staleToggle">Inaktive Geräte ausblenden</label>
             </div>
+        </nav>
 
-            <div id="inspector-log-data" class="inspector-section">
-                <h3>Geloggte Advertisement-Daten</h3>
-                <div id="inspector-rssi-chart-container">
-                    <canvas id="inspectorRssiChart"></canvas>
-                </div>
-                <div id="inspector-ad-list">
+        <div id="view-container">
+
+            <section id="beacon-view">
+                <div id="beaconDisplay" class="beacon-grid">
                     </div>
-            </div>
+            </section>
 
-            <div id="gatt-summary" class="gatt-summary-box" style="display: none;">
+            <section id="inspector-view" style="display: none;">
+                <nav class="inspector-nav">
+                    <button id="viewToggle" class="btn btn-secondary">❮ Beacon-Ansicht</button>
+                </nav>
+
+                <h2 id="inspectorDeviceName">[Gerätename]</h2>
+                
+                <div class="inspector-grid">
+                    <div class="inspector-col">
+                        <h3>RSSI-Verlauf</h3>
+                        <div class="chart-container">
+                            <canvas id="inspectorRssiChart"></canvas>
+                        </div>
+                        
+                        <h3>Geloggte Advertisement-Daten</h3>
+                        <div id="inspector-ad-list" class="ad-list">
+                            </div>
+                    </div>
+                    
+                    <div class="inspector-col">
+                        <h3>GATT-Steuerung</h3>
+                        <div class="gatt-controls">
+                            <button id="gattConnectButton" class="btn btn-primary" disabled>Verbinden</button>
+                            <button id="gattDisconnectButton" class="btn btn-secondary" disabled>Trennen</button>
+                        </div>
+                        
+                        <div id="gatt-summary" class="gatt-summary-box" style="display: none;">
+                            </div>
+                        
+                        <div id="gatt-tree-container">
+                            <p>Noch nicht verbunden. Klicken Sie auf "Verbinden", um den GATT-Baum zu laden.</p>
+                        </div>
+                    </div>
                 </div>
-
-            <div id="gatt-tree-container" class="inspector-section" style="display: none;">
-                <h3>GATT-Service-Baum</h3>
-                </div>
-
-        </div>
-
-        <div id="beacon-view">
-            <div id="beaconDisplay" class="card-container">
-                </div>
+            </section>
         </div>
     </main>
 
     <footer>
-        <div id="diag-log-panel">
+        <div id="diag-log-panel" class="diag-log">
             <span class="log-entry log-info">[BeaconBay] Diagnose-Panel initialisiert...</span>
         </div>
     </footer>
 
-    <script>
-      window.setTimeout(() => {
-        if (window.__app_heartbeat !== true) {
-          console.error("WATCHDOG TIMEOUT: app.js wurde nicht korrekt ausgeführt.");
-          const logPanel = document.getElementById('diag-log-panel');
-          if (logPanel) {
-            const errorEntry = document.createElement('span');
-            errorEntry.className = 'log-entry log-error';
-            errorEntry.textContent = '[WATCHDOG] FATAL: Hauptanwendung (app.js) konnte nicht gestartet werden. Prüfen Sie das Diagnose-Log auf Ladefehler.';
-            logPanel.prepend(errorEntry);
-          } else {
-            alert("FATAL: Anwendung konnte nicht geladen werden.");
-          }
-        }
-      }, 2500);
-    </script>
+    <div id="write-modal-overlay" class="modal-overlay" style="display: none;">
+        <div id="write-modal" class="modal-content">
+            <h3 id="write-modal-title">Schreibe auf Characteristic...</h3>
+            
+            <div class="modal-form-group">
+                <label for="write-modal-type">Senden als:</label>
+                <select id="write-modal-type">
+                    <option value="hex" selected>Hexadezimal (z.B. 01FF)</option>
+                    <option value="text">Text (UTF-8)</option>
+                    <option value="decimal">Dezimal (z.B. 255)</option>
+                </select>
+            </div>
+            
+            <div class="modal-form-group">
+                <label for="write-modal-input">Wert:</label>
+                <input type="text" id="write-modal-input" placeholder="0x...">
+            </div>
+            
+            <div class="modal-actions">
+                <button id="modal-write-cancel-btn" class="btn btn-secondary">Abbrechen</button>
+                <button id="modal-write-send-btn" class="btn btn-primary">Senden</button>
+            </div>
+        </div>
+    </div>
+
     <script type="module" src="js/app.js"></script>
 
 </body>
 </html>
+ 
