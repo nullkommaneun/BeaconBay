@@ -1,149 +1,99 @@
 /**
- * js/browser.js (Version 2 - Mit Audio-Keep-Alive)
- * * ARCHITEKTUR-HINWEIS: Layer 1 Modul.
- * * ABHÄNGIGKEITEN: errorManager.js
- * * ZWECK:
- * 1. Kapselt die "Keep-Alive"-Logik.
- * * KORREKTUR:
- * - Startet jetzt *immer* den Audio-Fallback (für den BT-Chip)
- * - *UND* versucht, den Screen Wake Lock zu bekommen (für den Bildschirm).
+ * js/browser.js (Version 12 - Geolocation-Hack)
+ * * ARCHITEKTUR-HINWEIS:
+ * - V12: Entfernt alle unzuverlässigen Audio- und WakeLock-Hacks.
+ * - V12: Implementiert navigator.geolocation.watchPosition().
+ * - Dies ist der stärkste Keep-Alive, den eine Web-App hat.
+ * Er signalisiert dem OS eine "Navigations-Aufgabe".
+ * - ERFORDERT: "Standort"-Berechtigung durch den Benutzer.
  */
 
 import { diagLog } from './errorManager.js';
 
 // === MODULE STATE ===
+let geoWatchId = null;
+
+// === PRIVATE HELPER ===
 
 /**
- * Hält die Referenz auf das WakeLock-Objekt.
- * @type {WakeLockSentinel | null}
+ * V12: Erfolgs-Callback für watchPosition.
+ * Wir protokollieren es nur, wir speichern den Standort NICHT.
  */
-let wakeLockSentinel = null;
+function geoSuccess(position) {
+    diagLog(`Geolocation Keep-Alive aktiv. (Position wird *nicht* gespeichert/verwendet)`, 'utils');
+}
 
 /**
- * Hält die Referenz auf den AudioContext für den Fallback.
- * @type {AudioContext | null}
+ * V12: Fehler-Callback für watchPosition.
+ * (z.B. wenn der Benutzer die Berechtigung verweigert)
  */
-let audioContext = null;
-
-/**
- * Hält die Referenz auf die Audio-Quelle (Oszillator).
- * @type {OscillatorNode | null}
- */
-let audioSource = null;
-
-/**
- * Startet den "Keep-Alive-Audio"-Stream (unhörbarer 20Hz-Ton).
- * * WARUM: Verhindert, dass das OS (bes. mobil) die App-Prozesse
- * oder den Bluetooth-Chip in den Tiefschlaf versetzt,
- * selbst wenn der Bildschirm an ist.
- * @returns {boolean} - True bei Erfolg.
- */
-function startAudioFallback() {
-    if (audioContext) {
-        diagLog("Audio-Keep-Alive läuft bereits.", 'utils');
-        return true; 
-    }
-
-    try {
-        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-        if (!AudioContextClass) {
-            diagLog("Audio-Keep-Alive nicht unterstützt (kein AudioContext).", 'warn');
-            return false;
-        }
-
-        audioContext = new AudioContextClass();
-        
-        // WICHTIG: Prüfen, ob der AudioContext "hängt" (passiert auf manchen Browsern)
-        // Wir müssen ihn durch eine Nutzergeste (den Klick) "aufwecken".
-        if (audioContext.state === 'suspended') {
-            audioContext.resume();
-        }
-
-        audioSource = audioContext.createOscillator();
-        audioSource.type = 'sine';
-        audioSource.frequency.setValueAtTime(20, audioContext.currentTime); // 20 Hz
-        audioSource.connect(audioContext.destination);
-        audioSource.start();
-        
-        diagLog("Audio-Keep-Alive (20Hz) gestartet, um Scan aktiv zu halten.", 'info');
-        return true;
-
-    } catch (err) {
-        diagLog(`Fehler beim Starten des Audio-Keep-Alive: ${err.message}`, 'error');
-        audioContext = null;
-        audioSource = null;
-        return false;
+function geoError(err) {
+    diagLog(`Geolocation Keep-Alive FEHLER: ${err.message}`, 'error');
+    
+    // Wenn die Berechtigung verweigert wurde, versuchen wir es nicht erneut.
+    if (err.code === 1) { // 1 = PERMISSION_DENIED
+        stopKeepAlive();
     }
 }
 
 /**
- * Stoppt den "Keep-Alive-Audio"-Stream.
+ * V12: Startet den Geolocation-Watchdog.
  */
-function stopAudioFallback() {
+function startGeolocationFallback() {
+    if (!navigator.geolocation) {
+        diagLog("Geolocation-Hack nicht unterstützt.", 'error');
+        return;
+    }
+
+    if (geoWatchId) {
+        diagLog("Geolocation Keep-Alive läuft bereits.", 'warn');
+        return;
+    }
+
+    diagLog("Starte Geolocation Keep-Alive (V12)...", 'info');
     try {
-        if (audioSource) {
-            audioSource.stop();
-            audioSource.disconnect();
-            audioSource = null;
-        }
-        if (audioContext) {
-            audioContext.close();
-            audioContext = null;
-        }
-        diagLog("Audio-Keep-Alive gestoppt.", 'info');
+        geoWatchId = navigator.geolocation.watchPosition(
+            geoSuccess, 
+            geoError, 
+            {
+                enableHighAccuracy: true, // Zwingt die GPS-Nutzung
+                timeout: 5000,
+                maximumAge: 0 
+            }
+        );
     } catch (err) {
-        diagLog(`Fehler beim Stoppen des Audio-Keep-Alive: ${err.message}`, 'warn');
+        diagLog(`Fehler beim Starten von Geolocation: ${err.message}`, 'error');
     }
 }
+
+/**
+ * V12: Stoppt den Geolocation-Watchdog.
+ */
+function stopGeolocationFallback() {
+    if (geoWatchId) {
+        navigator.geolocation.clearWatch(geoWatchId);
+        geoWatchId = null;
+        diagLog("Geolocation Keep-Alive gestoppt.", 'info');
+    }
+}
+
 
 // === PUBLIC API ===
 
 /**
- * Startet alle "Keep-Alive"-Mechanismen.
- * 1. Screen Wake Lock (damit der Bildschirm an bleibt).
- * 2. Audio Fallback (damit der Scan nicht einschläft).
+ * Wird von app.js aufgerufen, um den Scan am Leben zu erhalten.
+ * (Ruft jetzt den V12-Geolocation-Hack auf)
  */
-export async function startKeepAlive() {
-    // 1. Starte IMMER den Audio-Stream, um den Scan am Leben zu erhalten
-    startAudioFallback();
-
-    // 2. Versuche ZUSÄTZLICH, den Bildschirm wach zu halten
-    if ('wakeLock' in navigator) {
-        try {
-            wakeLockSentinel = await navigator.wakeLock.request('screen');
-            wakeLockSentinel.addEventListener('release', () => {
-                diagLog('Screen WakeLock wurde vom System freigegeben.', 'warn');
-                wakeLockSentinel = null;
-            });
-            diagLog('Screen WakeLock erfolgreich aktiviert.', 'info');
-
-        } catch (err) {
-            // Das ist nicht fatal, der Audio-Stream läuft ja trotzdem
-            diagLog(`Screen WakeLock fehlgeschlagen (${err.name}). App bleibt dank Audio wach.`, 'warn');
-        }
-    } else {
-        diagLog('Screen WakeLock API nicht unterstützt. App bleibt dank Audio wach.', 'info');
-    }
+export function startKeepAlive() {
+    // Alte V2/V3 Hacks (Audio, WakeLock) sind entfernt.
+    startGeolocationFallback();
 }
 
 /**
- * Stoppt alle "Keep-Alive"-Mechanismen.
+ * Wird von app.js aufgerufen, um die Keep-Alive-Hacks zu beenden.
  */
 export function stopKeepAlive() {
-    // 1. Stoppe WakeLock (falls aktiv)
-    if (wakeLockSentinel) {
-        try {
-            wakeLockSentinel.release();
-            wakeLockSentinel = null;
-            diagLog('Screen WakeLock freigegeben.', 'info');
-        } catch (err) {
-            diagLog(`Fehler beim Freigeben des WakeLock: ${err.message}`, 'error');
-        }
-    }
-
-    // 2. Stoppe Audio (falls aktiv)
-    if (audioContext) {
-        stopAudioFallback();
-    }
+    // Alte V2/V3 Hacks (Audio, WakeLock) sind entfernt.
+    stopGeolocationFallback();
 }
  
