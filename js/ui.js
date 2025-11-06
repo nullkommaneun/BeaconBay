@@ -1,11 +1,11 @@
 /**
- * js/ui.js (Version 11.2 - "DOM-Ready" Fix)
+ * js/ui.js (Version 11.3 - Chart.js Import Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - V11.2: Behebt den "Cannot read properties of null (reading 'addEventListener')" Crash.
- * - Alle 'getElementById' werden von der globalen Ebene
- * in 'setupUIListeners' verschoben.
- * - Dies stellt sicher, dass der Code erst ausgeführt wird,
- * NACHDEM 'DOMContentLoaded' in app.js ausgelöst wurde.
+ * - V11.3 FIX: Importiert Chart.js als ES-Modul.
+ * Dies behebt den "App-startet-nicht"-Crash, der durch
+ * einen Race-Condition zwischen <script> (in html)
+ * und import (in js) verursacht wurde.
+ * - (Behält den V11.2 DOM-Fix bei)
  */
 
 import { diagLog } from './errorManager.js';
@@ -16,6 +16,9 @@ import {
     KNOWN_SERVICES,
     KNOWN_CHARACTERISTICS
 } from './utils.js';
+// V11.3 FIX: Importiere Chart.js direkt als Modul
+import { Chart } from "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js";
+
 
 // === MODULE STATE (V11.2) ===
 // Nur Deklarationen (let), keine Zuweisungen!
@@ -50,6 +53,7 @@ const INDUSTRIAL_COMPANIES = [
 
 
 // === PRIVATE HELPER: CHARTING ===
+// (Diese Funktion ist jetzt sicher, da 'Chart' importiert wurde)
 function createSparkline(canvas) {
     const ctx = canvas.getContext('2d');
     return new Chart(ctx, {
@@ -86,7 +90,32 @@ function renderTelemetry(telemetry) {
 function renderBeaconData(beaconData) {
     if (Object.keys(beaconData).length === 0) return '';
     let html = '<div class="beacon-data">';
-    // ... (iBeacon, Eddystone HTML) ...
+    
+    if (beaconData.uuid) { // iBeacon
+        html += `
+            <div><strong>UUID:</strong> ${beaconData.uuid}</div>
+            <div><strong>Major:</strong> ${beaconData.major} | <strong>Minor:</strong> ${beaconData.minor}</div>
+        `;
+    }
+    if (beaconData.url) { // Eddystone-URL
+        html += `
+            <div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>
+        `;
+    }
+    if (beaconData.uid) { // Eddystone-UID
+        html += `<div><strong>UID:</strong> ${beaconData.uid}</div>`;
+    }
+    if (beaconData.telemetry) { // Eddystone-TLM
+        const tlm = beaconData.telemetry;
+        html += `
+            <div class="beacon-telemetry">
+                <span>🔋 ${tlm.voltage} mV</span>
+                <span>🌡️ ${tlm.temperature} °C</span>
+                <span>📡 AdvCount: ${tlm.advCount}</span>
+                <span>⏱️ Uptime: ${tlm.uptime / 10} s</span>
+            </div>
+        `;
+    }
     html += '</div>';
     return html;
 }
@@ -145,10 +174,18 @@ export function setGattConnectingUI(isConnecting, error = null, isConnected = fa
         gattConnectButton.textContent = 'Verbunden';
         gattDisconnectButton.disabled = false;
     } else {
-        const deviceLog = appCallbacks.onGetDeviceLog(currentlyInspectedId);
-        gattConnectButton.disabled = deviceLog ? !deviceLog.isConnectable : true;
-        gattConnectButton.textContent = 'Verbinden';
+        // V9.15: appCallbacks.onGetDeviceLog ist jetzt verfügbar
+        if (appCallbacks.onGetDeviceLog) { 
+            const deviceLog = appCallbacks.onGetDeviceLog(currentlyInspectedId);
+            gattConnectButton.disabled = deviceLog ? !deviceLog.isConnectable : true;
+            gattConnectButton.textContent = 'Verbinden';
+        } else {
+            // Fallback, falls der Callback noch nicht bereit ist
+            gattConnectButton.disabled = false;
+            gattConnectButton.textContent = 'Verbinden';
+        }
         gattDisconnectButton.disabled = true;
+        
         if (gattTreeContainer) {
             if (error) {
                 gattTreeContainer.innerHTML = `<p style="color:var(--error-color);">Verbindung fehlgeschlagen: ${error}</p>`;
@@ -318,7 +355,6 @@ export function updateCharacteristicValue(charUuid, value, isNotifying = false, 
 
 /**
  * V11.2 PATCH: Alle getElementById-Aufrufe sind HIERHER verschoben.
- * Diese Funktion wird von app.js NACH DOMContentLoaded aufgerufen.
  */
 export function setupUIListeners(callbacks) {
     appCallbacks = callbacks;
@@ -470,5 +506,4 @@ export function clearUI() {
     cardChartMap.forEach(chart => chart.destroy());
     cardChartMap.clear();
 }
-
  
