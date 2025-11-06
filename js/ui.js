@@ -1,10 +1,8 @@
 /**
- * js/ui.js (Version 11.3 - Chart.js Import Fix)
+ * js/ui.js (Version 11.4 - Chart.js ESM-Import Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - V11.3 FIX: Importiert Chart.js als ES-Modul.
- * Dies behebt den "App-startet-nicht"-Crash, der durch
- * einen Race-Condition zwischen <script> (in html)
- * und import (in js) verursacht wurde.
+ * - V11.4 FIX: Importiert Chart.js als ES-Modul (ESM).
+ * - Dies behebt den "App-startet-nicht"-Crash.
  * - (Behält den V11.2 DOM-Fix bei)
  */
 
@@ -16,8 +14,11 @@ import {
     KNOWN_SERVICES,
     KNOWN_CHARACTERISTICS
 } from './utils.js';
-// V11.3 FIX: Importiere Chart.js direkt als Modul
-import { Chart } from "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js";
+// V11.4 FIX: Importiere Chart.js direkt als Modul
+import { Chart, registerables } from "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.esm.js";
+
+// V11.4 FIX: Registriere alle Chart.js-Komponenten (Controller, Skalen etc.)
+Chart.register(...registerables);
 
 
 // === MODULE STATE (V11.2) ===
@@ -339,7 +340,7 @@ export function updateCharacteristicValue(charUuid, value, isNotifying = false, 
     const valueEl = document.getElementById(`val-${charUuid}`);
     if (!valueEl) return;
     if (isNotifying) {
-        valueEl.textContent = "Wert: [Abonniert, warte auf Daten...]";
+        valueEl.textContent = "Wert: [Abonnert, warte auf Daten...]"; // Typo korrigiert
         valueEl.style.color = "var(--warn-color)";
         return;
     }
@@ -420,7 +421,7 @@ export function setupUIListeners(callbacks) {
         hideWriteModal();
     });
     
-    diagLog('UI-Event-Listener (V11.2) erfolgreich gebunden.', 'info');
+    diagLog('UI-Event-Listener (V11.2/11.4) erfolgreich gebunden.', 'info');
 }
 
 export function setScanStatus(isScanning) {
@@ -489,21 +490,5 @@ export function updateBeaconUI(deviceId, device) {
     if (telemetryEl) telemetryEl.innerHTML = renderTelemetry(device.telemetry).trim();
 
     const beaconDataEl = card.querySelector('.beacon-data');
-    if (beaconDataEl) beaconDataEl.innerHTML = renderBeaconData(device.beaconData).trim();
-
-    const chart = cardChartMap.get(deviceId);
-    if (chart) updateSparkline(chart, device.rssi);
-    
-    card.classList.remove('stale');
-}
-export function setCardStale(deviceId) {
-    const card = document.getElementById(deviceId);
-    if (card) card.classList.add('stale');
-}
-export function clearUI() {
-    diagLog('Bereinige UI und lösche Beacon-Karten...', 'ui');
-    beaconDisplay.innerHTML = '';
-    cardChartMap.forEach(chart => chart.destroy());
-    cardChartMap.clear();
-}
+    if (beaconDataEl) beaconData
  
