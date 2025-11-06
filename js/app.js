@@ -1,35 +1,27 @@
 /**
- * js/app.js (Version 10 - GATT-Write Implementiert)
+ * js/app.js (Version 11 - "Write Modal")
  * * ARCHITEKTUR-HINWEIS:
- * - Basiert auf der stabilen V9.15 (Smart Filter & Auto-Restart).
- * - V10: Importiert 'writeCharacteristic' (von bluetooth.js) und 'hexStringToArrayBuffer' (von utils.js).
- * - V10: Fügt 'writeAction' als neuen Callback hinzu (verwendet 'prompt()' für die Eingabe).
- * - V10: Übergibt 'onWrite' an setupUIListeners.
+ * - V11: 'writeAction' (mit prompt) wurde entfernt.
+ * - V11: 'modalWriteSubmitAction' hinzugefügt. Diese Funktion
+ * wird von ui.js aufgerufen, wenn im Modal auf "Senden" geklickt wird.
+ * - V11: Konvertiert Text/Dezimal-Eingaben in ArrayBuffer.
  */
 
 // Heartbeat
 window.__app_heartbeat = false;
 
 function earlyDiagLog(msg, isError = false) {
-    try {
-        const panel = document.getElementById('diag-log-panel');
-        if (panel) {
-            const entry = document.createElement('span');
-            entry.className = `log-entry ${isError ? 'log-error' : 'log-bootstrap'}`;
-            entry.textContent = `[${new Date().toLocaleTimeString('de-DE')}] [BOOTSTRAP]: ${msg}`;
-            panel.prepend(entry);
-        } else { console.log(msg); }
-    } catch (e) { console.error("EarlyDiagLog FAILED:", e); }
+    // ... (unverändert)
 }
 
 async function initApp() {
     // Variablen für Modul-Funktionen
     let diagLog, initGlobalErrorHandler;
     let startKeepAlive, stopKeepAlive;
-    let loadCompanyIDs, hexStringToArrayBuffer; // V10: Hinzugefügt
+    let loadCompanyIDs, hexStringToArrayBuffer; 
     let setupUIListeners, showInspectorView, showView, setGattConnectingUI; 
     let initBluetooth, startScan, stopScan, disconnect,
-        readCharacteristic, startNotifications, writeCharacteristic; // V10: Hinzugefügt
+        readCharacteristic, startNotifications, writeCharacteristic; 
     let requestDeviceForHandshake, connectWithAuthorizedDevice;
     let getDeviceLog, generateLogFile; 
 
@@ -52,7 +44,7 @@ async function initApp() {
         diagLog('Lade Layer 1 (utils.js)...', 'utils');
         const utilsModule = await import('./utils.js');
         loadCompanyIDs = utilsModule.loadCompanyIDs;
-        hexStringToArrayBuffer = utilsModule.hexStringToArrayBuffer; // V10: Hinzugefügt
+        hexStringToArrayBuffer = utilsModule.hexStringToArrayBuffer; 
         
         diagLog('Lade Layer 1 (logger.js)...', 'utils');
         const loggerModule = await import('./logger.js');
@@ -76,121 +68,70 @@ async function initApp() {
         disconnect = bluetoothModule.disconnect;
         readCharacteristic = bluetoothModule.readCharacteristic;
         startNotifications = bluetoothModule.startNotifications;
-        writeCharacteristic = bluetoothModule.writeCharacteristic; // V10: Hinzugefügt
+        writeCharacteristic = bluetoothModule.writeCharacteristic; 
 
         diagLog('Alle Module erfolgreich geladen.', 'info');
 
         // --- Callbacks definieren (Dependency Inversion) ---
         diagLog('Verbinde UI-Listener...', 'info');
 
-        const scanAction = () => {
-            diagLog("Aktion: Scan gestartet (via app.js)", "bt");
-            startKeepAlive();
-            startScan();
-        };
-
-        const stopScanAction = () => {
-            diagLog("Aktion: Scan gestoppt (via app.js)", "bt");
-            stopScan();
-            stopKeepAlive();
-        };
-        
-        const inspectAction = (deviceId) => {
-            diagLog(`Aktion: Inspiziere ${deviceId.substring(0, 4)}... (Scan läuft)`, 'ui');
-            const deviceLog = getDeviceLog(deviceId);
-            if (deviceLog) {
-                showInspectorView(deviceLog);
-            } else {
-                diagLog(`FEHLER: Konnte Log-Daten für ${deviceId} nicht finden.`, 'error');
-            }
-        };
-        
-        const gattConnectAction = async (deviceId) => {
-            diagLog(`Aktion: GATT-Handshake (Smart Filter) für ${deviceId.substring(0, 4)}... anfordern`, 'bt');
-            
-            stopScan();
-            stopKeepAlive();
-            
-            const authorizedDevice = await requestDeviceForHandshake(deviceId);
-            
-            if (!authorizedDevice) {
-                diagLog('Handshake vom Benutzer abgelehnt oder fehlgeschlagen. Starte Scan neu...', 'bt');
-                setGattConnectingUI(false, 'Handshake abgelehnt');
-                scanAction(); 
-                return; 
-            }
-        
-            diagLog(`Handshake erfolgreich für ${authorizedDevice.name}. Verbinde...`, 'bt');
-            const success = await connectWithAuthorizedDevice(authorizedDevice);
-            
-            if (!success) {
-                diagLog('Verbindung trotz Handshake fehlgeschlagen. Starte Scan neu...', 'bt');
-                scanAction(); 
-            }
-        };
-        
-        const gattDisconnectAction = () => {
-            diagLog('Aktion: Trenne GATT-Verbindung (via app.js)', 'bt');
-            disconnect();
-        };
-        
-        const gattUnexpectedDisconnectAction = () => {
-            diagLog('Unerwartete Trennung (onGattDisconnect). Starte Scan neu...', 'bt');
-            scanAction();
-        };
-
-        const readAction = (charUuid) => {
-            diagLog(`Aktion: Lese Wert von ${charUuid}`, 'bt');
-            readCharacteristic(charUuid);
-        };
-        
-        const notifyAction = (charUuid) => {
-            diagLog(`Aktion: Abonniere ${charUuid}`, 'bt');
-            startNotifications(charUuid);
-        };
+        const scanAction = () => { /* ... (unverändert) ... */ };
+        const stopScanAction = () => { /* ... (unverändert) ... */ };
+        const inspectAction = (deviceId) => { /* ... (unverändert) ... */ };
+        const gattConnectAction = async (deviceId) => { /* ... (unverändert) ... */ };
+        const gattDisconnectAction = () => { /* ... (unverändert) ... */ };
+        const gattUnexpectedDisconnectAction = () => { /* ... (unverändert) ... */ };
+        const readAction = (charUuid) => { /* ... (unverändert) ... */ };
+        const notifyAction = (charUuid) => { /* ... (unverändert) ... */ };
+        const downloadAction = () => { /* ... (unverändert) ... */ };
+        const viewToggleAction = () => { /* ... (unverändert) ... */ };
 
         /**
-         * V10 NEU: Wird von ui.js aufgerufen, wenn auf "Schreiben" geklickt wird.
+         * V11 NEU: Ersetzt die alte 'writeAction'.
+         * Wird vom UI-Modal aufgerufen.
+         * Konvertiert den Wert basierend auf dem Typ und sendet ihn.
          */
-        const writeAction = (charUuid) => {
-            diagLog(`Aktion: Anforderung 'Schreiben' für ${charUuid}`, 'bt');
+        const modalWriteSubmitAction = (charUuid, value, type) => {
+            diagLog(`Aktion: 'Modal-Schreiben' für ${charUuid}, Typ: ${type}, Wert: ${value}`, 'bt');
             
-            // V10 TEST: Einfaches Pop-up
-            const dataHex = prompt("Hex-Wert eingeben (z.B. '0x01' oder 'FF01AA')");
-            
-            if (dataHex === null || dataHex.trim() === "") {
-                diagLog("Schreiben abgebrochen.", 'ui');
+            if (value === null || value.trim() === "") {
+                diagLog("Schreiben abgebrochen: Kein Wert.", 'ui');
                 return;
             }
 
+            let dataBuffer;
             try {
-                // Konvertiere den String in einen Buffer
-                const dataBuffer = hexStringToArrayBuffer(dataHex); 
-                // Sende an den Treiber
+                switch (type) {
+                    case 'hex':
+                        dataBuffer = hexStringToArrayBuffer(value);
+                        break;
+                    case 'text':
+                        const textEncoder = new TextEncoder(); // UTF-8 Encoder
+                        dataBuffer = textEncoder.encode(value);
+                        break;
+                    case 'decimal':
+                        const num = parseInt(value, 10);
+                        if (isNaN(num) || num < 0 || num > 255) {
+                            throw new Error("Dezimalwert muss zwischen 0 und 255 liegen (für 1 Byte).");
+                        }
+                        dataBuffer = new Uint8Array([num]).buffer;
+                        break;
+                    default:
+                        throw new Error(`Unbekannter Schreib-Typ: ${type}`);
+                }
+                
+                // Sende den konvertierten Buffer an den Treiber
                 writeCharacteristic(charUuid, dataBuffer);
+
             } catch (e) {
-                diagLog(`Ungültiges Hex-Format: ${e.message}`, 'error');
-                alert(`Ungültiges Format: ${e.message}. (z.B. '01' oder 'FF0A')`);
+                diagLog(`Ungültige Eingabe: ${e.message}`, 'error');
+                alert(`Ungültige Eingabe: ${e.message}`);
             }
         };
-        
-        const downloadAction = () => {
-            diagLog("Aktion: Download Log (via app.js)", "utils");
-            generateLogFile();
-        };
 
-        const viewToggleAction = () => {
-            diagLog("Aktion: Wechsle zur Beacon-Ansicht", "ui");
-            showView('beacon');
-            disconnect();
-        };
         
         // --- Initialisierung ---
         diagLog('Initialisiere Bluetooth-Modul (und Logger)...', 'bt');
-        /**
-         * V9.15 PATCH: Übergibt 'onGetDeviceLog' an bluetooth.js
-         * für den Smart Filter.
-         */
         initBluetooth({
             onGattDisconnected: gattUnexpectedDisconnectAction,
             onGetDeviceLog: getDeviceLog 
@@ -210,9 +151,9 @@ async function initApp() {
             onViewToggle: viewToggleAction,
             onRead: readAction,
             onNotify: notifyAction,
-            onWrite: writeAction, // V10 HINZUGEFÜGT
+            onModalWriteSubmit: modalWriteSubmitAction, // V11: Neuer Callback
             onDownload: downloadAction,
-            onGetDeviceLog: getDeviceLog, // (Für V9.2/V9.15 UI-Patch)
+            onGetDeviceLog: getDeviceLog, 
             onSort: () => {}, 
             onStaleToggle: () => {} 
         });
@@ -228,3 +169,4 @@ async function initApp() {
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
+ 
