@@ -1,24 +1,24 @@
-/* style.css - Das "BeaconBay Hacker Theme"
-  
-  Design-Philosophie: Dunkel, hoher Kontrast, Monospace-Schriftart
-  und Neon-Akzente (Cyan/Grün).
-*/
+/**
+ * style.css - Das "BeaconBay Hacker Theme" (V11.9 - Aufgeräumt)
+ *
+ * Design-Philosophie: Dunkel, hoher Kontrast, Monospace-Schriftart
+ * und Neon-Akzente (Cyan/Rot).
+ */
 
 /* Import der Monospace-Schriftart */
 @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;700&display=swap');
 
-/* WARUM: CSS-Variablen (Custom Properties)
-  Definieren das Farbschema an einem Ort.
-*/
+/* CSS-Variablen (Custom Properties) */
 :root {
-    --bg-color: #0a0a1a; /* Sehr dunkles Blau/Schwarz */
+    --bg-color: #0a0a1a;
+    --card-bg: #1a1a2e;
     --text-color: #e0e0e0;
+    --text-color-light: #aaa;
     --accent-color-main: #00faff; /* Neon-Cyan */
     --accent-color-secondary: #00ff8c; /* Neon-Grün */
-    --error-color: #ff4136;
-    --warn-color: #ffdc00;
+    --error-color: #ff4136; /* Neon-Rot */
+    --warn-color: #ffdc00; /* Neon-Gelb */
     --border-color: #00faff;
-    --card-bg: #1a1a2e;
     --font-main: 'Fira Code', 'Courier New', monospace;
 }
 
@@ -38,17 +38,15 @@ html, body {
     font-size: 14px;
     display: flex;
     flex-direction: column;
+    overflow: hidden; /* Verhindert "doppeltes" Scrollen */
 }
 
 /* ======== Layout-Container ======== */
-header, nav.toolbar {
+header {
     flex-shrink: 0; 
     padding: 0.75rem 1.5rem;
     border-bottom: 1px solid var(--border-color);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    flex-wrap: wrap;
+    background-color: #111;
 }
 
 header h1 {
@@ -56,9 +54,28 @@ header h1 {
     text-shadow: 0 0 5px var(--accent-color-main);
 }
 
-main#view-container {
-    flex-grow: 1; 
-    overflow-y: auto; 
+main {
+    flex-grow: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden; /* Wichtig für scrollbarem View-Container */
+}
+
+/* V11.6: Control-Panel ist Teil von <main> */
+nav.control-panel {
+    flex-shrink: 0;
+    padding: 0.75rem 1.5rem;
+    border-bottom: 1px solid #333;
+    background-color: #111;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+}
+
+#view-container {
+    flex-grow: 1;
+    overflow-y: auto; /* NUR dieser Container scrollt */
     padding: 1.5rem;
 }
 
@@ -69,23 +86,23 @@ footer {
 }
 
 /* ======== Steuerelemente (Buttons, Checkbox) ======== */
-button {
+.btn {
     font-family: var(--font-main);
     background: transparent;
-    border: 1px solid var(--accent-color-secondary);
-    color: var(--accent-color-secondary);
+    border: 1px solid var(--accent-color-main);
+    color: var(--accent-color-main);
     padding: 0.5rem 1rem;
     cursor: pointer;
     transition: all 0.2s ease;
 }
 
-button:hover {
-    background-color: var(--accent-color-secondary);
+.btn:hover {
+    background-color: var(--accent-color-main);
     color: #000;
-    box-shadow: 0 0 10px var(--accent-color-secondary);
+    box-shadow: 0 0 10px var(--accent-color-main);
 }
 
-button:disabled {
+.btn:disabled {
     border-color: #555;
     color: #555;
     cursor: not-allowed;
@@ -93,16 +110,32 @@ button:disabled {
     box-shadow: none;
 }
 
-nav.toolbar {
-    background-color: #111;
-    border-bottom-color: #333;
-    gap: 1rem;
+/* Primäre Aktion (Scan, Senden) */
+.btn-primary {
+    border-color: var(--accent-color-main);
+    color: var(--accent-color-main);
+}
+.btn-primary:hover {
+    background-color: var(--accent-color-main);
+    color: #000;
 }
 
-.toolbar-group {
+/* Sekundäre Aktion (Stopp, Abbrechen) */
+.btn-secondary {
+    border-color: #888;
+    color: #888;
+}
+.btn-secondary:hover {
+    background-color: #888;
+    color: #000;
+    border-color: #888;
+    box-shadow: none;
+}
+
+.toggle-group {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
 }
 
 input[type="checkbox"] {
@@ -129,7 +162,7 @@ input[type="checkbox"] {
 
 /* Farbige Log-Level */
 .log-info, .log-bootstrap { color: var(--accent-color-main); }
-.log-utils { color: #aaa; }
+.log-utils { color: var(--text-color-light); }
 .log-bt { color: var(--text-color); }
 .log-ui { color: #b0b0b0; }
 .log-warn { color: var(--warn-color); }
@@ -140,8 +173,8 @@ input[type="checkbox"] {
 }
 
 
-/* ======== Beacon-Ansicht ======== */
-.card-container {
+/* ======== Ansicht 1: Beacon-Liste ======== */
+#beaconDisplay { /* V11.6: ID aus index.html */
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
     gap: 1.25rem;
@@ -150,7 +183,8 @@ input[type="checkbox"] {
 .beacon-card {
     background-color: var(--card-bg);
     border: 1px solid #444;
-    border-left: 4px solid var(--accent-color-main);
+    /* V11.9: Standard-Rand ist neutral */
+    border-left: 5px solid #444; 
     padding: 1rem;
     transition: all 0.3s ease;
     cursor: pointer;
@@ -159,6 +193,12 @@ input[type="checkbox"] {
 .beacon-card:hover {
     border-color: var(--accent-color-main);
     box-shadow: 0 0 10px var(--accent-color-main);
+}
+
+/* V11.9: Rotes Highlighting für alle Daten-Beacons */
+.beacon-card.data-beacon {
+    border-left: 5px solid var(--error-color); /* ROT */
+    background: linear-gradient(90deg, rgba(255, 70, 70, 0.1) 0%, rgba(255, 70, 70, 0) 100%);
 }
 
 .beacon-card h3 {
@@ -181,19 +221,13 @@ input[type="checkbox"] {
     font-size: 0.8rem;
 }
 
-/* .stale-Klasse (wird von JS gesetzt) */
-.stale {
+/* Stale-Modus */
+.beacon-card.stale {
     opacity: 0.3;
     border-left-color: #555;
-    cursor: default;
 }
 
-/* WIE: Stale-Modus
-   Wenn der Container die Klasse .stale-mode hat (via Checkbox),
-   werden alle Karten mit der .stale-Klasse ausgeblendet.
-   Das ist performanter als das Entfernen aus dem DOM.
-*/
-.stale-mode .stale {
+.stale-mode .beacon-card.stale {
     display: none;
 }
 
@@ -213,174 +247,51 @@ input[type="checkbox"] {
 }
 
 
-/* ======== GATT-Ansicht ======== */
-.gatt-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 1rem;
-    background-color: var(--card-bg);
-    border-bottom: 2px solid var(--accent-color-main);
-    margin-bottom: 1rem;
-}
-
-.gatt-header h2 {
-    color: var(--accent-color-main);
-    font-size: 1.2rem;
-}
-
-#gatt-tree-container {
-    font-size: 0.9rem;
-}
-
-/* Stile für den Service-Baum */
-.gatt-service {
-    background-color: var(--card-bg);
-    border: 1px solid #333;
-    margin-bottom: 1rem;
-}
-
-.gatt-service-header {
-    padding: 0.75rem;
-    border-bottom: 1px solid var(--accent-color-secondary);
-}
-
-.gatt-service-header strong {
-    color: var(--accent-color-secondary);
-    font-size: 1.1rem;
-}
-
-.gatt-char-list {
-    padding: 0.75rem;
-}
-
-.gatt-char {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem;
-    border-bottom: 1px dotted #444;
-}
-
-.gatt-char-name {
-    color: var(--text-color);
-}
-
-.gatt-char-uuid {
-    font-size: 0.8rem;
-    color: #888;
-}
-
-.gatt-char-actions button {
-    font-size: 0.8rem;
-    padding: 0.25rem 0.5rem;
-    margin-left: 0.5rem;
-    border-color: #555;
-    color: #888;
-}
-
-.gatt-char-actions button:hover {
-    border-color: var(--accent-color-main);
-    color: var(--accent-color-main);
-    background: transparent;
-    box-shadow: none;
-}
-/* style.css (Auszug - Hinzufügen) */
-
-/* WIE: Visuelles Feedback für nicht-verbindungsfähige Geräte.
-  Die .beacon-card hat 'cursor: pointer'. Wir überschreiben das
-  für Karten, die von ui.js die .not-connectable-Klasse erhalten.
-*/
-.beacon-card.not-connectable {
-    cursor: default;
-    border-left-color: #555; /* Weniger prominente Farbe */
-}
-
-/* Verhindert den Hover-Effekt bei nicht-verbindungsfähigen Geräten */
-.beacon-card.not-connectable:hover {
-    border-color: #444; /* Standard-Randfarbe beibehalten */
-    box-shadow: none;
-}
-
-/* ======== GATT-ZUSAMMENFASSUNG (NEU) ======== */
-
-.gatt-summary-box {
-    background-color: var(--card-bg);
-    border: 1px solid var(--accent-color-secondary);
-    padding: 1rem;
+/* ======== Ansicht 2: Inspektor ======== */
+nav.inspector-nav {
     margin-bottom: 1.5rem;
 }
 
-.gatt-summary-box h3 {
-    color: var(--accent-color-secondary);
-    margin-bottom: 0.75rem;
-    border-bottom: 1px dotted var(--accent-color-secondary);
-    padding-bottom: 0.5rem;
+#inspectorDeviceName {
+    color: var(--accent-color-main);
+    margin-bottom: 1.5rem;
+    word-wrap: break-word;
 }
 
-.gatt-summary-box div {
+.inspector-grid {
     display: grid;
-    grid-template-columns: 180px 1fr;
-    gap: 0.5rem;
-    margin-bottom: 0.5rem;
-    font-size: 0.9rem;
+    grid-template-columns: 1fr; /* Standard: 1 Spalte auf Handy */
+    gap: 1.5rem;
 }
 
-.gatt-summary-box strong {
-    color: var(--text-color);
+/* 2 Spalten für breitere Bildschirme */
+@media (min-width: 800px) {
+    .inspector-grid {
+        grid-template-columns: 1fr 1fr;
+    }
 }
 
-.gatt-summary-box span {
-    color: var(--accent-color-main);
-    /* Bricht lange Seriennummern um */
-    word-break: break-all; 
-}
-
-/* NEU: Visuelles Hervorheben von Industrie-Geräten */
-.beacon-card.industrial {
-    /* Ein leuchtend gelber/oranger Rand, der "Alarm" schreit */
-    border: 2px solid #FFD700; 
-    box-shadow: 0 0 15px #FFD700;
-}
-
-.beacon-card.industrial h3 {
-    color: #FFD700; /* Überschreibt das Standard-Cyan */
-}
-
-/* ======== INSPEKTOR-ANSICHT (ersetzt GATT) ======== */
-
-.inspector-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 0.5rem 1rem;
-    background-color: var(--card-bg);
-    border-bottom: 2px solid var(--accent-color-main);
-    margin-bottom: 1rem;
-}
-
-.inspector-header h2 {
-    color: var(--accent-color-main);
-    font-size: 1.2rem;
-}
-
-.inspector-section {
-    margin-bottom: 1.5rem;
-}
-
-.inspector-section h3 {
+.inspector-col h3 {
     color: var(--accent-color-secondary);
     border-bottom: 1px dotted var(--accent-color-secondary);
     padding-bottom: 0.5rem;
     margin-bottom: 1rem;
 }
 
-/* Stile für die geloggten Advertisement-Daten */
+/* Linke Spalte */
+.chart-container {
+    width: 100%;
+    height: 150px;
+    margin-bottom: 1rem;
+    background-color: #111;
+    padding: 0.5rem;
+}
+
 #inspector-ad-list {
     background-color: #000;
     padding: 0.5rem 1rem;
     border: 1px solid #333;
-    max-height: 200px;
+    max-height: 250px;
     overflow-y: auto;
     font-size: 0.9rem;
 }
@@ -396,21 +307,17 @@ input[type="checkbox"] {
     color: var(--accent-color-main);
 }
 .ad-entry .payload {
-    color: #ccc;
+    color: var(--text-color-light);
     word-break: break-all;
 }
 
-/* Stile für den RSSI-Verlauf-Chart */
-#inspector-rssi-chart-container {
-    width: 100%;
-    height: 100px;
-    margin-bottom: 1rem;
-    background-color: #111;
-    padding: 0.5rem;
+/* Rechte Spalte */
+.gatt-controls {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
 }
 
-
-/* Stile für die GATT-Zusammenfassung (unverändert) */
 .gatt-summary-box {
     background-color: var(--card-bg);
     border: 1px solid var(--accent-color-secondary);
@@ -425,7 +332,7 @@ input[type="checkbox"] {
 }
 .gatt-summary-box div {
     display: grid;
-    grid-template-columns: 180px 1fr;
+    grid-template-columns: 150px 1fr;
     gap: 0.5rem;
     margin-bottom: 0.5rem;
     font-size: 0.9rem;
@@ -436,7 +343,7 @@ input[type="checkbox"] {
     word-break: break-all; 
 }
 
-/* Stile für den GATT-Baum (unverändert) */
+/* GATT-Baum */
 .gatt-service {
     background-color: var(--card-bg);
     border: 1px solid #333;
@@ -453,16 +360,30 @@ input[type="checkbox"] {
 .gatt-char-list { padding: 0.75rem; }
 .gatt-char {
     display: flex;
+    flex-wrap: wrap; /* Besser für kleine Bildschirme */
     justify-content: space-between;
     align-items: center;
     padding: 0.5rem;
     border-bottom: 1px dotted #444;
+}
+.gatt-char-details {
+    margin-bottom: 0.5rem;
 }
 .gatt-char-name { color: var(--text-color); }
 .gatt-char-uuid {
     font-size: 0.8rem;
     color: #888;
 }
+.gatt-char-value {
+    font-size: 0.9em;
+    color: var(--text-color-light);
+    margin-top: 0.5rem;
+    width: 100%;
+}
+.gatt-char-value small {
+    color: #888;
+}
+
 .gatt-char-actions button {
     font-size: 0.8rem;
     padding: 0.25rem 0.5rem;
@@ -470,33 +391,19 @@ input[type="checkbox"] {
     border-color: #555;
     color: #888;
 }
-.gatt-char-actions button:hover {
+.gatt-char-actions button:hover:not(:disabled) {
     border-color: var(--accent-color-main);
     color: var(--accent-color-main);
     background: transparent;
     box-shadow: none;
 }
-
-/* Industrielles Highlighting (unverändert) */
-.beacon-card.industrial {
-    border: 2px solid #FFD700;
-    box-shadow: 0 0 15px #FFD700;
-}
-.beacon-card.industrial h3 {
-    color: #FFD700;
+.gatt-char-actions button:disabled {
+    border-color: #333;
+    color: #555;
 }
 
-/* Klick-Logik (unverändert) */
-.beacon-card.not-connectable {
-    cursor: default;
-    border-left-color: #555;
-}
-.beacon-card.not-connectable:hover {
-    border-color: #444;
-    box-shadow: none;
-}
 
-/* V11: Write Modal Styling */
+/* ======== V11: Write Modal Styling (Gekürzt) ======== */
 .modal-overlay {
     position: fixed;
     top: 0;
@@ -511,7 +418,8 @@ input[type="checkbox"] {
 }
 
 .modal-content {
-    background: var(--bg-color-dark);
+    /* V11.9 Fix: Verwende definierte Variablen */
+    background: var(--card-bg); 
     border: 1px solid var(--border-color);
     border-radius: 8px;
     padding: 20px;
@@ -523,7 +431,7 @@ input[type="checkbox"] {
 .modal-content h3 {
     margin-top: 0;
     color: var(--accent-color-main);
-    word-wrap: break-word; /* Für lange UUIDs/Namen */
+    word-wrap: break-word;
 }
 
 .modal-form-group {
@@ -541,7 +449,8 @@ input[type="checkbox"] {
 .modal-form-group select {
     width: 100%;
     padding: 10px;
-    background: var(--bg-color-darkest);
+    /* V11.9 Fix: Verwende definierte Variablen */
+    background: var(--bg-color); 
     border: 1px solid var(--border-color);
     border-radius: 4px;
     color: var(--text-color);
@@ -554,16 +463,4 @@ input[type="checkbox"] {
     gap: 10px;
     margin-top: 20px;
 }
-
-/* ... (füge dies zu deiner vorhandenen .industrial-Klasse hinzu) ... */
-
-.beacon-card.industrial {
-    border-left: 5px solid var(--warn-color); /* Gelb (Bestehend) */
-    background: linear-gradient(90deg, rgba(255, 193, 7, 0.1) 0%, rgba(255, 193, 7, 0) 100%);
-}
-
-/* V11.8 NEU: Highlighting für "Interessante Daten-Beacons" */
-.beacon-card.data-beacon {
-    border-left: 5px solid var(--accent-color-main); /* Blau */
-    background: linear-gradient(90deg, rgba(0, 250, 255, 0.05) 0%, rgba(0, 250, 255, 0) 100%);
-}
+ 
