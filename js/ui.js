@@ -1,11 +1,11 @@
 /**
- * js/ui.js (Version 11.7 - Export-Fix)
+ * js/ui.js (Version 11.8 - "Smart Highlighting" Patch)
  * * ARCHITEKTUR-HINWEIS:
- * - V11.7 FIX: Fügt das fehlende 'export'-Schlüsselwort
- * zu 'setGattConnectingUI' hinzu.
- * - Dies behebt den "does not provide an export"-Absturz
- * beim Laden von bluetooth.js.
- * - (Behält den V11.6 "DOM-Ready" Fix bei)
+ * - V11.8: updateBeaconUI fügt "Smart Highlighting" hinzu.
+ * - .industrial (gelb) für bekannte Industrie-Firmen.
+ * - .data-beacon (blau) für alle anderen Geräte, die 'manufacturerData'
+ * oder 'serviceData' senden.
+ * - (Basiert auf V11.7, alle DOM- und Export-Fixes sind enthalten)
  */
 
 import { diagLog } from './errorManager.js';
@@ -437,10 +437,15 @@ export function setScanStatus(isScanning) {
         disconnectButton.disabled = true;
     }
 }
+
+/**
+ * V11.8 PATCH: "Smart Highlighting" implementiert.
+ */
 export function updateBeaconUI(deviceId, device) {
     let card = document.getElementById(deviceId);
     
     if (!card) {
+        // === Karte ERSTELLEN ===
         card = document.createElement('div');
         card.id = deviceId;
         card.className = 'beacon-card';
@@ -457,10 +462,18 @@ export function updateBeaconUI(deviceId, device) {
             }
         });
 
+        // V11.8 "SMART HIGHLIGHTING" PATCH
+        // (Wir nutzen das 'device.type'-Feld, das von 'parseAdvertisementData' in utils.js gesetzt wird)
         if (INDUSTRIAL_COMPANIES.includes(device.company)) {
+            // Priorität 1: Bekannte Industrie-Ziele
             diagLog(`[TRACE] updateBeaconUI: Markiere ${device.company} als Industrie-Gerät.`, 'info');
-            card.classList.add('industrial');
+            card.classList.add('industrial'); // Gelber Rand
+        } else if (device.type === 'manufacturerData' || device.type === 'serviceData') {
+            // Priorität 2: Alle anderen "interessanten" Daten-Sender
+            diagLog(`[TRACE] updateBeaconUI: Markiere ${device.id.substring(0,4)} als Daten-Beacon.`, 'info');
+            card.classList.add('data-beacon'); // Blauer Rand
         }
+        // Priorität 3: 'nameOnly'-Geräte (wie der Flipper) bekommen keinen Rand.
         
         card.innerHTML = `
             <h3>${device.name}</h3>
