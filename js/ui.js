@@ -1,9 +1,11 @@
 /**
  * js/ui.js (Version 11.4 - Chart.js ESM-Import Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - V11.4 FIX: Importiert Chart.js als ES-Modul (ESM).
+ * - V11.4 FIX: Importiert Chart.js als ES-Modul (ESM)
+ * von 'chart.esm.js' (nicht 'chart.umd.min.js').
+ * - V11.4 FIX: Registriert 'registerables' von Chart.js,
+ * was für den ESM-Import zwingend notwendig ist.
  * - Dies behebt den "App-startet-nicht"-Crash.
- * - (Behält den V11.2 DOM-Fix bei)
  */
 
 import { diagLog } from './errorManager.js';
@@ -14,7 +16,7 @@ import {
     KNOWN_SERVICES,
     KNOWN_CHARACTERISTICS
 } from './utils.js';
-// V11.4 FIX: Importiere Chart.js direkt als Modul
+// V11.4 FIX: Importiere die korrekte ESM-Version und 'registerables'
 import { Chart, registerables } from "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.esm.js";
 
 // V11.4 FIX: Registriere alle Chart.js-Komponenten (Controller, Skalen etc.)
@@ -54,7 +56,7 @@ const INDUSTRIAL_COMPANIES = [
 
 
 // === PRIVATE HELPER: CHARTING ===
-// (Diese Funktion ist jetzt sicher, da 'Chart' importiert wurde)
+// (Diese Funktion ist jetzt sicher, da 'Chart' korrekt importiert wurde)
 function createSparkline(canvas) {
     const ctx = canvas.getContext('2d');
     return new Chart(ctx, {
@@ -340,7 +342,7 @@ export function updateCharacteristicValue(charUuid, value, isNotifying = false, 
     const valueEl = document.getElementById(`val-${charUuid}`);
     if (!valueEl) return;
     if (isNotifying) {
-        valueEl.textContent = "Wert: [Abonnert, warte auf Daten...]"; // Typo korrigiert
+        valueEl.textContent = "Wert: [Abonniert, warte auf Daten...]";
         valueEl.style.color = "var(--warn-color)";
         return;
     }
@@ -421,7 +423,7 @@ export function setupUIListeners(callbacks) {
         hideWriteModal();
     });
     
-    diagLog('UI-Event-Listener (V11.2/11.4) erfolgreich gebunden.', 'info');
+    diagLog('UI-Event-Listener (V11.4) erfolgreich gebunden.', 'info');
 }
 
 export function setScanStatus(isScanning) {
@@ -490,5 +492,21 @@ export function updateBeaconUI(deviceId, device) {
     if (telemetryEl) telemetryEl.innerHTML = renderTelemetry(device.telemetry).trim();
 
     const beaconDataEl = card.querySelector('.beacon-data');
-    if (beaconDataEl) beaconData
+    if (beaconDataEl) beaconDataEl.innerHTML = renderBeaconData(device.beaconData).trim();
+
+    const chart = cardChartMap.get(deviceId);
+    if (chart) updateSparkline(chart, device.rssi);
+    
+    card.classList.remove('stale');
+}
+export function setCardStale(deviceId) {
+    const card = document.getElementById(deviceId);
+    if (card) card.classList.add('stale');
+}
+export function clearUI() {
+    diagLog('Bereinige UI und lösche Beacon-Karten...', 'ui');
+    beaconDisplay.innerHTML = '';
+    cardChartMap.forEach(chart => chart.destroy());
+    cardChartMap.clear();
+}
  
