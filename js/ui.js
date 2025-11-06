@@ -5,6 +5,7 @@
  * zu 'setGattConnectingUI' hinzu.
  * - Dies behebt den "does not provide an export"-Absturz
  * beim Laden von bluetooth.js.
+ * - (Behält den V11.6 "DOM-Ready" Fix bei)
  */
 
 import { diagLog } from './errorManager.js';
@@ -15,13 +16,11 @@ import {
     KNOWN_SERVICES,
     KNOWN_CHARACTERISTICS
 } from './utils.js';
-import { Chart, registerables } from "https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.esm.js";
-
-// Registriere alle Chart.js-Komponenten
-Chart.register(...registerables);
+// V11.6: Chart.js wird von index.html geladen, kein Import hier.
 
 
 // === MODULE STATE (V11.2) ===
+// Nur Deklarationen (let), keine Zuweisungen!
 let scanButton, disconnectButton, viewToggle, sortButton, staleToggle,
     beaconDisplay, downloadButton, beaconView, inspectorView,
     inspectorDeviceName, inspectorRssiCanvas, inspectorAdList,
@@ -55,6 +54,7 @@ const INDUSTRIAL_COMPANIES = [
 // === PRIVATE HELPER: CHARTING ===
 function createSparkline(canvas) {
     const ctx = canvas.getContext('2d');
+    // 'Chart' ist global verfügbar (von index.html)
     return new Chart(ctx, {
         type: 'line',
         data: { labels: [], datasets: [{ data: [], borderColor: '#00faff', borderWidth: 2, pointRadius: 0, tension: 0.3 }] },
@@ -384,7 +384,7 @@ export function setupUIListeners(callbacks) {
     writeModalTypeSelect = document.getElementById('write-modal-type');
     writeModalInput = document.getElementById('write-modal-input');
     modalWriteCancelBtn = document.getElementById('modal-write-cancel-btn');
-mModalWriteSendBtn = document.getElementById('modal-write-send-btn');
+    modalWriteSendBtn = document.getElementById('modal-write-send-btn');
     // === Ende Zuweisung ===
 
     
@@ -509,3 +509,4 @@ export function clearUI() {
     cardChartMap.forEach(chart => chart.destroy());
     cardChartMap.clear();
 }
+ 
