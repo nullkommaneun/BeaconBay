@@ -1,12 +1,10 @@
 /**
- * js/app.js (Version 12.1 - "Permission Race" Fix)
+ * js/app.js (Version 12.3 - "Load Order" Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - V12.1 FIX: 'scanAction' ist jetzt 'async'.
- * - V12.1: 'startScan()' wird ZUERST aufgerufen (await),
- * um die Benutzergeste (Klick) für die Bluetooth-Berechtigung zu nutzen.
- * - 'startKeepAlive()' wird DANACH aufgerufen (nur bei Erfolg),
- * da die Standortberechtigung dann bereits erteilt wurde.
- * - (Basiert auf V11.5 "Robust Logger")
+ * - V12.3 FIX: 'await loadCompanyIDs()' wird jetzt VOR 'initBluetooth()'
+ * aufgerufen.
+ * - Dies behebt den "Firma: Unbekannt"-Bug, da die Namensliste
+ * jetzt bereitsteht, wenn der Scan (und parseAdvertisementData) beginnt.
  */
 
 // Heartbeat
@@ -17,8 +15,7 @@ import { diagLog, initGlobalErrorHandler, earlyDiagLog } from './errorManager.js
 initGlobalErrorHandler(); // Installiere globale Handler sofort
 
 /**
- * V11.5: Wrapper, da diagLog vielleicht noch nicht voll initialisiert ist,
- * aber earlyDiagLog sollte funktionieren.
+ * V11.5: Wrapper
  */
 function appInitLogger(msg, level = 'bootstrap') {
     try {
@@ -58,7 +55,7 @@ async function initApp() {
         getDeviceLog = loggerModule.getDeviceLog;
         generateLogFile = loggerModule.generateLogFile;
         
-        appInitLogger('Lade Layer 2 (ui.js)... (Potenzieller Absturzpunkt)', 'utils');
+        appInitLogger('Lade Layer 2 (ui.js)...', 'utils');
         const uiModule = await import('./ui.js');
         appInitLogger('Layer 2 (ui.js) erfolgreich geladen.', 'info');
         
@@ -84,19 +81,9 @@ async function initApp() {
         // --- Callbacks definieren (Dependency Inversion) ---
         appInitLogger('Verbinde UI-Listener...', 'info');
 
-        /**
-         * V12.1 PATCH: Reihenfolge der Aufrufe korrigiert.
-         */
-        const scanAction = async () => { // V12.1: Make async
+        const scanAction = async () => { 
             diagLog("Aktion: Scan gestartet (via app.js)", "bt");
-            
-            // V12.1 PATCH: Rufe startScan() ZUERST auf.
-            // Dies verbraucht die "Benutzergeste" (Klick) für die
-            // Bluetooth-Berechtigungsanfrage.
-            const scanStarted = await startScan(); // V12.1: 'await' und 'scanStarted'
-            
-            // V12.1: Starte den Keep-Alive NUR, wenn der Scan
-            // erfolgreich gestartet wurde (d.h. Berechtigung erteilt).
+            const scanStarted = await startScan();
             if (scanStarted) {
                 startKeepAlive();
             }
@@ -177,7 +164,7 @@ async function initApp() {
                         dataBuffer = hexStringToArrayBuffer(value);
                         break;
                     case 'text':
-                        const textEncoder = new TextEncoder(); // UTF-8 Encoder
+                        const textEncoder = new TextEncoder();
                         dataBuffer = textEncoder.encode(value);
                         break;
                     case 'decimal':
@@ -211,18 +198,19 @@ async function initApp() {
         };
         
         // --- Initialisierung ---
+        
+        // V12.3 FIX: Lade IDs ZUERST, DANN starte Bluetooth
+        appInitLogger('Lade Company IDs...', 'utils');
+        await loadCompanyIDs();
+        
         appInitLogger('Initialisiere Bluetooth-Modul (und Logger)...', 'bt');
         initBluetooth({
             onGattDisconnected: gattUnexpectedDisconnectAction,
             onGetDeviceLog: getDeviceLog 
         }); 
-        
-        appInitLogger('Lade Company IDs...', 'utils');
-        await loadCompanyIDs();
-
 
         // --- UI-Listener mit Callbacks verbinden ---
-        appInitLogger('Verbinde UI-Listener... (V11.5)', 'info');
+        appInitLogger('Verbinde UI-Listener... (V12.3)', 'info');
         
         setupUIListeners({
             onScan: scanAction,
@@ -244,6 +232,7 @@ async function initApp() {
         window.__app_heartbeat = true;
 
     } catch (err) {
+        // Dieser 'catch' fängt jetzt den Import-Fehler von ui.js ab
         const errorMsg = `FATALER APP-LADEFEHLER: ${err.message}.`;
         appInitLogger(errorMsg, 'error');
         console.error(errorMsg, err);
