@@ -1,7 +1,7 @@
 /**
- * js/ui.js (Version 11.1 - "DOM-Ready" Fix)
+ * js/ui.js (Version 11.2 - "DOM-Ready" Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - V11.1: Behebt den "Cannot read properties of null (reading 'addEventListener')" Crash.
+ * - V11.2: Behebt den "Cannot read properties of null (reading 'addEventListener')" Crash.
  * - Alle 'getElementById' werden von der globalen Ebene
  * in 'setupUIListeners' verschoben.
  * - Dies stellt sicher, dass der Code erst ausgeführt wird,
@@ -17,7 +17,7 @@ import {
     KNOWN_CHARACTERISTICS
 } from './utils.js';
 
-// === MODULE STATE (V11.1) ===
+// === MODULE STATE (V11.2) ===
 // Nur Deklarationen (let), keine Zuweisungen!
 let scanButton, disconnectButton, viewToggle, sortButton, staleToggle,
     beaconDisplay, downloadButton, beaconView, inspectorView,
@@ -34,33 +34,70 @@ let currentlyInspectedId = null;
 let currentWriteCharUuid = null;
 
 const INDUSTRIAL_COMPANIES = [
-    // ... (Liste unverändert)
+    'Nordic Semiconductor ASA',
+    'Texas Instruments',
+    'Silicon Labs',
+    'Espressif Inc.',
+    'Intel Corp.',
+    'Qualcomm',
+    'Siemens AG',
+    'Robert Bosch GmbH',
+    'KUKA AG',
+    'Phoenix Contact',
+    'Murata Manufacturing Co., Ltd.',
+    'Volkswagen AG'
 ];
 
 
 // === PRIVATE HELPER: CHARTING ===
-// ... (createSparkline, updateSparkline bleiben unverändert) ...
 function createSparkline(canvas) {
     const ctx = canvas.getContext('2d');
-    return new Chart(ctx, { /* ... */ });
+    return new Chart(ctx, {
+        type: 'line',
+        data: { labels: [], datasets: [{ data: [], borderColor: '#00faff', borderWidth: 2, pointRadius: 0, tension: 0.3 }] },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false }, tooltip: { enabled: false } },
+            scales: { x: { display: false }, y: { display: false, suggestedMin: -100, suggestedMax: -30 } }
+        }
+    });
 }
-function updateSparkline(chart, rssi) { /* ... */ }
-
+function updateSparkline(chart, rssi) {
+    const data = chart.data.datasets[0].data;
+    const labels = chart.data.labels;
+    data.push(rssi);
+    labels.push('');
+    if (data.length > 20) { data.shift(); labels.shift(); }
+    chart.update('none');
+}
 
 // === PRIVATE HELPER: RENDERING ===
-// ... (renderTelemetry, renderBeaconData bleiben unverändert) ...
-function renderTelemetry(telemetry) { /* ... */ }
-function renderBeaconData(beaconData) { /* ... */ }
+function renderTelemetry(telemetry) {
+    if (!telemetry.temperature) return ''; 
+    return `
+        <div class="beacon-telemetry">
+            <span>🌡️ ${telemetry.temperature} °C</span>
+            <span>💧 ${telemetry.humidity} %</span>
+            <span>🌬️ ${telemetry.pressure} hPa</span>
+            <span>🔋 ${telemetry.voltage} V</span>
+        </div>
+    `;
+}
+function renderBeaconData(beaconData) {
+    if (Object.keys(beaconData).length === 0) return '';
+    let html = '<div class="beacon-data">';
+    // ... (iBeacon, Eddystone HTML) ...
+    html += '</div>';
+    return html;
+}
 
 // === PRIVATE HELPER: UI-AKTIONEN ===
-
 function sortBeaconCards() {
     diagLog('Sortiere Karten nach RSSI...', 'utils');
     const cards = Array.from(beaconDisplay.children);
     cards.sort((a, b) => (+b.dataset.rssi || -1000) - (+a.dataset.rssi || -1000));
     beaconDisplay.append(...cards);
 }
-
 function handleStaleToggle() {
     isStaleModeActive = staleToggle.checked;
     if (isStaleModeActive) {
@@ -80,14 +117,12 @@ function showWriteModal(charUuid, charName) {
     writeModalOverlay.style.display = 'flex';
     writeModalInput.focus();
 }
-
 function hideWriteModal() {
     writeModalOverlay.style.display = 'none';
     currentWriteCharUuid = null;
 }
 
 // === PUBLIC API: VIEW-MANAGEMENT ===
-
 export function showView(viewName) {
     if (viewName === 'inspector') {
         if (beaconView) beaconView.style.display = 'none';
@@ -99,27 +134,102 @@ export function showView(viewName) {
         if (viewToggle) viewToggle.disabled = true;
     }
 }
-
 export function setGattConnectingUI(isConnecting, error = null, isConnected = false) {
-    // ... (unverändert)
+    if (isConnecting) {
+        gattConnectButton.disabled = true;
+        gattConnectButton.textContent = 'Verbinde...';
+        gattDisconnectButton.disabled = true;
+        if (gattTreeContainer) gattTreeContainer.innerHTML = '<p>Verbinde und lese Services...</p>';
+    } else if (isConnected) {
+        gattConnectButton.disabled = true;
+        gattConnectButton.textContent = 'Verbunden';
+        gattDisconnectButton.disabled = false;
+    } else {
+        const deviceLog = appCallbacks.onGetDeviceLog(currentlyInspectedId);
+        gattConnectButton.disabled = deviceLog ? !deviceLog.isConnectable : true;
+        gattConnectButton.textContent = 'Verbinden';
+        gattDisconnectButton.disabled = true;
+        if (gattTreeContainer) {
+            if (error) {
+                gattTreeContainer.innerHTML = `<p style="color:var(--error-color);">Verbindung fehlgeschlagen: ${error}</p>`;
+            } else {
+                gattTreeContainer.innerHTML = '<p>Getrennt. Klicken Sie auf "Verbinden", um den GATT-Baum zu laden.</p>';
+            }
+        }
+    }
 }
-
 export function showInspectorView(deviceLog) {
-    // ... (unverändert)
+    currentlyInspectedId = deviceLog.id;
+    if (inspectorRssiChart) {
+        inspectorRssiChart.destroy();
+        inspectorRssiChart = null;
+    }
+    inspectorAdList.innerHTML = '';
+    gattSummaryBox.style.display = 'none';
+    gattTreeContainer.innerHTML = '<p>Noch nicht verbunden. Klicken Sie auf "Verbinden", um den GATT-Baum zu laden.</p>';
+    gattTreeContainer.style.display = 'block';
+    inspectorDeviceName.textContent = deviceLog.name || '[Unbenannt]';
+    gattConnectButton.disabled = !deviceLog.isConnectable;
+    gattConnectButton.textContent = 'Verbinden';
+    gattDisconnectButton.disabled = true;
+    const ctx = inspectorRssiCanvas.getContext('2d');
+    inspectorRssiChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: deviceLog.rssiHistory.map(h => h.t.substring(11, 19)),
+            datasets: [{
+                label: 'RSSI-Verlauf',
+                data: deviceLog.rssiHistory.map(h => h.r),
+                borderColor: '#00faff',
+                backgroundColor: 'rgba(0, 250, 255, 0.1)',
+                fill: true,
+                pointRadius: 1,
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { color: '#aaa' } },
+                y: { ticks: { color: '#aaa' }, suggestedMin: -100, suggestedMax: -30 }
+            }
+        }
+    });
+    if (deviceLog.uniqueAdvertisements.length === 0) {
+        inspectorAdList.innerHTML = '<div class="ad-entry">Keine Advertisement-Daten geloggt.</div>';
+    } else {
+        deviceLog.uniqueAdvertisements.forEach(ad => {
+            let content = '';
+            if (ad.type === 'nameOnly') {
+                content = `<strong>Typ:</strong> Nur Name`;
+            } else if (ad.type === 'manufacturerData') {
+                content = `<strong>Typ:</strong> Hersteller-Daten | <strong>ID:</strong> ${ad.companyId}<br><span class="payload">${ad.payload}</span>`;
+            } else if (ad.type === 'serviceData') {
+                content = `<strong>Typ:</strong> Service-Daten | <strong>UUID:</strong> ${ad.serviceUuid}<br><span class="payload">${ad.payload}</span>`;
+            }
+            inspectorAdList.innerHTML += `<div class="ad-entry">${content}</div>`;
+        });
+    }
+    showView('inspector');
 }
-
-/**
- * V11.1 PATCH: Aktiviert den "Schreiben"-Button
- */
 export function renderGattTree(gattTree, deviceName, summary) {
     gattTreeContainer.innerHTML = ''; 
     gattConnectButton.disabled = true;
     gattConnectButton.textContent = 'Verbunden';
     gattDisconnectButton.disabled = false;
     
-    // ... (Summary-Box-Code unverändert) ...
+    if (summary && Object.keys(summary).length > 0) {
+        let summaryHtml = '<h3>Geräte-Information</h3>';
+        for (const [key, value] of Object.entries(summary)) {
+            summaryHtml += `<div><strong>${key}:</strong> <span>${value}</span></div>`;
+        }
+        gattSummaryBox.innerHTML = summaryHtml;
+        gattSummaryBox.style.display = 'block';
+    } else {
+        gattSummaryBox.style.display = 'none';
+    }
 
-    // === 2. ROH-BAUM FÜLLEN ===
     gattTreeContainer.innerHTML = '<h3>GATT-Service-Baum</h3>'; 
     if (gattTree.length === 0) {
         gattTreeContainer.innerHTML += '<p>Keine Services auf diesem Gerät gefunden.</p>';
@@ -129,7 +239,6 @@ export function renderGattTree(gattTree, deviceName, summary) {
     gattTree.forEach(service => {
         const serviceEl = document.createElement('div');
         serviceEl.className = 'gatt-service';
-        
         serviceEl.innerHTML = `
             <div class="gatt-service-header">
                 <strong>Service: ${service.name}</strong>
@@ -166,18 +275,14 @@ export function renderGattTree(gattTree, deviceName, summary) {
                     </div>
                 `;
                 
-                // Event-Listener binden
                 if (canRead === '') {
                     charEl.querySelector('.gatt-read-btn').addEventListener('click', () => appCallbacks.onRead(char.uuid));
                 }
-                
-                // V11 PATCH: Ruft das Modal auf
                 if (canWrite === '') {
                     charEl.querySelector('.gatt-write-btn').addEventListener('click', () => {
                         showWriteModal(char.uuid, char.name);
                     });
                 }
-                
                 if (canNotify === '') {
                     charEl.querySelector('.gatt-notify-btn').addEventListener('click', (e) => {
                         appCallbacks.onNotify(char.uuid);
@@ -193,21 +298,32 @@ export function renderGattTree(gattTree, deviceName, summary) {
         gattTreeContainer.appendChild(serviceEl);
     });
 }
-
 export function updateCharacteristicValue(charUuid, value, isNotifying = false, decodedValue = null) {
-    // ... (unverändert)
+    const valueEl = document.getElementById(`val-${charUuid}`);
+    if (!valueEl) return;
+    if (isNotifying) {
+        valueEl.textContent = "Wert: [Abonniert, warte auf Daten...]";
+        valueEl.style.color = "var(--warn-color)";
+        return;
+    }
+    if (value) {
+        const displayValue = decodedValue ? decodedValue : dataViewToText(value);
+        const hexVal = dataViewToHex(value);
+        valueEl.innerHTML = `Wert: ${displayValue} <br><small>(${hexVal})</small>`;
+        valueEl.style.color = "var(--text-color)";
+    }
 }
 
 // === PUBLIC API: SETUP & BEACON UPDATE ===
 
 /**
- * V11.1 PATCH: Alle getElementById-Aufrufe sind HIERHER verschoben.
+ * V11.2 PATCH: Alle getElementById-Aufrufe sind HIERHER verschoben.
  * Diese Funktion wird von app.js NACH DOMContentLoaded aufgerufen.
  */
 export function setupUIListeners(callbacks) {
     appCallbacks = callbacks;
     
-    // === V11.1 DOM-Zuweisung ===
+    // === V11.2 DOM-Zuweisung ===
     scanButton = document.getElementById('scanButton');
     disconnectButton = document.getElementById('disconnectButton');
     viewToggle = document.getElementById('viewToggle');
@@ -268,22 +384,91 @@ export function setupUIListeners(callbacks) {
         hideWriteModal();
     });
     
-    diagLog('UI-Event-Listener (V11.1) erfolgreich gebunden.', 'info');
+    diagLog('UI-Event-Listener (V11.2) erfolgreich gebunden.', 'info');
 }
 
 export function setScanStatus(isScanning) {
-    // ... (unverändert)
+    if (isScanning) {
+        scanButton.disabled = true;
+        scanButton.textContent = 'Scanning...';
+        disconnectButton.disabled = false;
+    } else {
+        scanButton.disabled = false;
+        scanButton.textContent = 'Scan Starten';
+        disconnectButton.disabled = true;
+    }
 }
-
 export function updateBeaconUI(deviceId, device) {
-    // ... (unverändert)
-}
+    let card = document.getElementById(deviceId);
+    
+    if (!card) {
+        card = document.createElement('div');
+        card.id = deviceId;
+        card.className = 'beacon-card';
+        
+        diagLog(`[TRACE] updateBeaconUI: Prüfe 'isConnectable' für ${device.id.substring(0, 4)}... Wert: ${device.isConnectable}`, 'utils');
+        
+        card.addEventListener('click', () => {
+            diagLog(`[TRACE] Klick auf Karte ${deviceId.substring(0, 4)}... in ui.js erkannt.`, 'info');
+            if (appCallbacks.onInspect) { 
+                diagLog(`[TRACE] Rufe appCallbacks.onInspect für ${deviceId.substring(0, 4)}... auf.`, 'info');
+                appCallbacks.onInspect(deviceId);
+            } else {
+                diagLog(`[TRACE] FEHLER: appCallbacks.onInspect ist UNDEFINED.`, 'error');
+            }
+        });
 
+        if (INDUSTRIAL_COMPANIES.includes(device.company)) {
+            diagLog(`[TRACE] updateBeaconUI: Markiere ${device.company} als Industrie-Gerät.`, 'info');
+            card.classList.add('industrial');
+        }
+        
+        card.innerHTML = `
+            <h3>${device.name}</h3>
+            <div class="beacon-meta">
+                <small>${device.id}</small>
+                <span><strong>Firma:</strong> ${device.company}</span>
+                <span><strong>Typ:</strong> ${device.type}</span>
+            </div>
+            <div class="beacon-signal">
+                <strong>RSSI:</strong> <span class="rssi-value">${device.rssi} dBm</span> | 
+                <strong>Distanz:</strong> <span class="distance-value">...</span>
+            </div>
+            ${renderTelemetry(device.telemetry)}
+            ${renderBeaconData(device.beaconData)}
+            <div class="sparkline-container"><canvas></canvas></div>
+        `;
+        beaconDisplay.prepend(card);
+
+        const canvas = card.querySelector('canvas');
+        if (canvas) cardChartMap.set(deviceId, createSparkline(canvas));
+    }
+
+    // === Karte AKTUALISIEREN ===
+    card.querySelector('.rssi-value').textContent = `${device.rssi} dBm`;
+    card.dataset.rssi = device.rssi;
+    card.querySelector('.distance-value').textContent = calculateDistance(device.txPower, device.rssi); 
+    
+    const telemetryEl = card.querySelector('.beacon-telemetry');
+    if (telemetryEl) telemetryEl.innerHTML = renderTelemetry(device.telemetry).trim();
+
+    const beaconDataEl = card.querySelector('.beacon-data');
+    if (beaconDataEl) beaconDataEl.innerHTML = renderBeaconData(device.beaconData).trim();
+
+    const chart = cardChartMap.get(deviceId);
+    if (chart) updateSparkline(chart, device.rssi);
+    
+    card.classList.remove('stale');
+}
 export function setCardStale(deviceId) {
-    // ... (unverändert)
+    const card = document.getElementById(deviceId);
+    if (card) card.classList.add('stale');
+}
+export function clearUI() {
+    diagLog('Bereinige UI und lösche Beacon-Karten...', 'ui');
+    beaconDisplay.innerHTML = '';
+    cardChartMap.forEach(chart => chart.destroy());
+    cardChartMap.clear();
 }
 
-export function clearUI() {
-    // ... (unverändert)
-}
  
