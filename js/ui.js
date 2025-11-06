@@ -1,11 +1,10 @@
 /**
- * js/ui.js (Version 11.8 - "Smart Highlighting" Patch)
+ * js/ui.js (Version 11.9 - Rotes "Data-Beacon" Highlighting)
  * * ARCHITEKTUR-HINWEIS:
- * - V11.8: updateBeaconUI fügt "Smart Highlighting" hinzu.
- * - .industrial (gelb) für bekannte Industrie-Firmen.
- * - .data-beacon (blau) für alle anderen Geräte, die 'manufacturerData'
- * oder 'serviceData' senden.
- * - (Basiert auf V11.7, alle DOM- und Export-Fixes sind enthalten)
+ * - V11.9: Entfernt die 'INDUSTRIAL_COMPANIES'-Liste und die gelbe 'industrial'-Logik.
+ * - V11.9: Alle Geräte mit 'manufacturerData' oder 'serviceData'
+ * werden jetzt mit der Klasse '.data-beacon' (ROT) hervorgehoben.
+ * - (Basiert auf V11.7, alle DOM/Export-Fixes sind enthalten)
  */
 
 import { diagLog } from './errorManager.js';
@@ -35,20 +34,7 @@ let inspectorRssiChart = null;
 let currentlyInspectedId = null;
 let currentWriteCharUuid = null;
 
-const INDUSTRIAL_COMPANIES = [
-    'Nordic Semiconductor ASA',
-    'Texas Instruments',
-    'Silicon Labs',
-    'Espressif Inc.',
-    'Intel Corp.',
-    'Qualcomm',
-    'Siemens AG',
-    'Robert Bosch GmbH',
-    'KUKA AG',
-    'Phoenix Contact',
-    'Murata Manufacturing Co., Ltd.',
-    'Volkswagen AG'
-];
+// V11.9: INDUSTRIAL_COMPANIES-Liste entfernt.
 
 
 // === PRIVATE HELPER: CHARTING ===
@@ -439,7 +425,7 @@ export function setScanStatus(isScanning) {
 }
 
 /**
- * V11.8 PATCH: "Smart Highlighting" implementiert.
+ * V11.9 PATCH: "Smart Highlighting" implementiert (ROT).
  */
 export function updateBeaconUI(deviceId, device) {
     let card = document.getElementById(deviceId);
@@ -462,18 +448,14 @@ export function updateBeaconUI(deviceId, device) {
             }
         });
 
-        // V11.8 "SMART HIGHLIGHTING" PATCH
+        // V11.9 "SMART HIGHLIGHTING" PATCH (ROT)
         // (Wir nutzen das 'device.type'-Feld, das von 'parseAdvertisementData' in utils.js gesetzt wird)
-        if (INDUSTRIAL_COMPANIES.includes(device.company)) {
-            // Priorität 1: Bekannte Industrie-Ziele
-            diagLog(`[TRACE] updateBeaconUI: Markiere ${device.company} als Industrie-Gerät.`, 'info');
-            card.classList.add('industrial'); // Gelber Rand
-        } else if (device.type === 'manufacturerData' || device.type === 'serviceData') {
-            // Priorität 2: Alle anderen "interessanten" Daten-Sender
+        if (device.type === 'manufacturerData' || device.type === 'serviceData') {
+            // Priorität 1: Alle "interessanten" Daten-Sender
             diagLog(`[TRACE] updateBeaconUI: Markiere ${device.id.substring(0,4)} als Daten-Beacon.`, 'info');
-            card.classList.add('data-beacon'); // Blauer Rand
+            card.classList.add('data-beacon'); // Roter Rand
         }
-        // Priorität 3: 'nameOnly'-Geräte (wie der Flipper) bekommen keinen Rand.
+        // Priorität 2: 'nameOnly'-Geräte (wie der Flipper) bekommen keinen Rand.
         
         card.innerHTML = `
             <h3>${device.name}</h3>
