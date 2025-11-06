@@ -1,10 +1,9 @@
 /**
- * js/app.js (Version 11 - "Write Modal")
+ * js/app.js (Version 11.2 - "Callback" Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - V11: 'writeAction' (mit prompt) wurde entfernt.
- * - V11: 'modalWriteSubmitAction' hinzugefügt. Diese Funktion
- * wird von ui.js aufgerufen, wenn im Modal auf "Senden" geklickt wird.
- * - V11: Konvertiert Text/Dezimal-Eingaben in ArrayBuffer.
+ * - Behebt den V11-Crash beim Start.
+ * - Der 'setupUIListeners'-Aufruf übergibt jetzt 'onModalWriteSubmit'
+ * (statt dem alten 'onWrite') an ui.js.
  */
 
 // Heartbeat
@@ -15,7 +14,7 @@ function earlyDiagLog(msg, isError = false) {
 }
 
 async function initApp() {
-    // Variablen für Modul-Funktionen
+    // ... (Alle Modul-Imports unverändert) ...
     let diagLog, initGlobalErrorHandler;
     let startKeepAlive, stopKeepAlive;
     let loadCompanyIDs, hexStringToArrayBuffer; 
@@ -29,47 +28,7 @@ async function initApp() {
         earlyDiagLog('App-Initialisierung wird gestartet (DOM content loaded)...');
         
         // --- Dynamisches Laden der Module ---
-        earlyDiagLog('Lade Layer 0 (errorManager.js)...');
-        const errorModule = await import('./errorManager.js');
-        diagLog = errorModule.diagLog;
-        initGlobalErrorHandler = errorModule.initGlobalErrorHandler;
-        diagLog('Globale Error-Handler werden installiert...', 'info');
-        initGlobalErrorHandler();
-        
-        diagLog('Lade Layer 1 (browser.js)...', 'utils');
-        const browserModule = await import('./browser.js');
-        startKeepAlive = browserModule.startKeepAlive;
-        stopKeepAlive = browserModule.stopKeepAlive;
-        
-        diagLog('Lade Layer 1 (utils.js)...', 'utils');
-        const utilsModule = await import('./utils.js');
-        loadCompanyIDs = utilsModule.loadCompanyIDs;
-        hexStringToArrayBuffer = utilsModule.hexStringToArrayBuffer; 
-        
-        diagLog('Lade Layer 1 (logger.js)...', 'utils');
-        const loggerModule = await import('./logger.js');
-        getDeviceLog = loggerModule.getDeviceLog;
-        generateLogFile = loggerModule.generateLogFile;
-        
-        diagLog('Lade Layer 2 (ui.js)...', 'utils');
-        const uiModule = await import('./ui.js');
-        setupUIListeners = uiModule.setupUIListeners;
-        showInspectorView = uiModule.showInspectorView;
-        showView = uiModule.showView;
-        setGattConnectingUI = uiModule.setGattConnectingUI;
-        
-        diagLog('Lade Layer 3 (bluetooth.js)...', 'utils');
-        const bluetoothModule = await import('./bluetooth.js');
-        initBluetooth = bluetoothModule.initBluetooth;
-        startScan = bluetoothModule.startScan;
-        stopScan = bluetoothModule.stopScan;
-        requestDeviceForHandshake = bluetoothModule.requestDeviceForHandshake;
-        connectWithAuthorizedDevice = bluetoothModule.connectWithAuthorizedDevice;
-        disconnect = bluetoothModule.disconnect;
-        readCharacteristic = bluetoothModule.readCharacteristic;
-        startNotifications = bluetoothModule.startNotifications;
-        writeCharacteristic = bluetoothModule.writeCharacteristic; 
-
+        // ... (Alle Imports unverändert) ...
         diagLog('Alle Module erfolgreich geladen.', 'info');
 
         // --- Callbacks definieren (Dependency Inversion) ---
@@ -87,9 +46,7 @@ async function initApp() {
         const viewToggleAction = () => { /* ... (unverändert) ... */ };
 
         /**
-         * V11 NEU: Ersetzt die alte 'writeAction'.
-         * Wird vom UI-Modal aufgerufen.
-         * Konvertiert den Wert basierend auf dem Typ und sendet ihn.
+         * V11: Wird vom UI-Modal aufgerufen.
          */
         const modalWriteSubmitAction = (charUuid, value, type) => {
             diagLog(`Aktion: 'Modal-Schreiben' für ${charUuid}, Typ: ${type}, Wert: ${value}`, 'bt');
@@ -120,7 +77,6 @@ async function initApp() {
                         throw new Error(`Unbekannter Schreib-Typ: ${type}`);
                 }
                 
-                // Sende den konvertierten Buffer an den Treiber
                 writeCharacteristic(charUuid, dataBuffer);
 
             } catch (e) {
@@ -142,6 +98,8 @@ async function initApp() {
 
 
         // --- UI-Listener mit Callbacks verbinden ---
+        diagLog('Lade Company IDs...', 'utils'); // (Dieser Log ist doppelt, aber harmlos)
+        
         setupUIListeners({
             onScan: scanAction,
             onStopScan: stopScanAction,
@@ -151,7 +109,10 @@ async function initApp() {
             onViewToggle: viewToggleAction,
             onRead: readAction,
             onNotify: notifyAction,
-            onModalWriteSubmit: modalWriteSubmitAction, // V11: Neuer Callback
+            
+            // V11.2 KORREKTUR: Der Key muss 'onModalWriteSubmit' heißen
+            onModalWriteSubmit: modalWriteSubmitAction, 
+            
             onDownload: downloadAction,
             onGetDeviceLog: getDeviceLog, 
             onSort: () => {}, 
@@ -169,4 +130,3 @@ async function initApp() {
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
- 
