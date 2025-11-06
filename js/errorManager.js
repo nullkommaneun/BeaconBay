@@ -1,92 +1,87 @@
 /**
- * js/errorManager.js
- * * ARCHITEKTUR-HINWEIS: Dies ist das Fundament (Layer 0).
- * * ABHÄNGIGKEITEN: KEINE.
- * * ZWECK:
- * 1. Bereitstellung einer globalen Logging-Funktion (`diagLog`).
- * 2. Installation von globalen Error-Handlern (`window.onerror`, `window.onunhandledrejection`),
- * um *alle* nicht abgefangenen Laufzeit-Fehler zu erfassen.
- * * WARUM KEINE ABHÄNGIGKEITEN?
- * Dieses Modul muss autark und garantiert geladen werden,
- * damit es Fehler in *anderen* Modulen loggen kann.
+ * js/errorManager.js (Version 11.5)
+ * * ARCHITEKTUR-HINWEIS:
+ * - V11.5: Exportiert 'earlyDiagLog' für den robusten Start von app.js.
  */
 
-// Zwischenspeichern des DOM-Elements beim Laden des Moduls
+// === MODULE STATE ===
 let logPanel = null;
+const MAX_LOG_ENTRIES = 100;
 
 /**
- * Ruft das Log-Panel-Element ab und speichert es zwischen.
- * @returns {HTMLElement | null} Das Diagnose-Log-Panel-Element.
+ * Loggt eine Nachricht in das Diagnose-Panel und die Konsole.
+ * @param {string} msg - Die Nachricht.
+ * @param {string} [type='info'] - Typ (info, error, warn, bt, utils, ui).
  */
-function getLogPanel() {
+export function diagLog(msg, type = 'info') {
     if (!logPanel) {
         logPanel = document.getElementById('diag-log-panel');
-    }
-    return logPanel;
-}
-
-/**
- * Schreibt eine formatierte Log-Nachricht in das Diagnose-Panel im Footer.
- *
- * @param {string} message - Die anzuzeigende Nachricht.
- * @param {'info' | 'warn' | 'error' | 'utils' | 'bt' | 'ui' | 'bootstrap'} [level='info'] - Der Log-Level (steuert die CSS-Klasse).
- */
-export function diagLog(message, level = 'info') {
-    try {
-        const panel = getLogPanel();
-        if (!panel) {
-            console.error(`[${level.toUpperCase()}] (Panel not found): ${message}`);
+        if (!logPanel) {
+            console.error("DIAGLOG FEHLER: Panel 'diag-log-panel' nicht gefunden.");
             return;
         }
+    }
 
-        const entry = document.createElement('span');
-        entry.className = `log-entry log-${level}`;
-        
-        const timestamp = new Date().toLocaleTimeString('de-DE', { hour12: false });
-        entry.textContent = `[${timestamp}] [${level.toUpperCase()}]: ${message}`;
+    const timestamp = new Date().toLocaleTimeString('de-DE');
+    const entry = document.createElement('span');
+    
+    let logTypeClass = 'log-info';
+    switch(type) {
+        case 'error': logTypeClass = 'log-error'; console.error(`[${timestamp}] ${msg}`); break;
+        case 'warn': logTypeClass = 'log-warn'; console.warn(`[${timestamp}] ${msg}`); break;
+        case 'bt': logTypeClass = 'log-bt'; console.log(`[${timestamp}] [BT]: ${msg}`); break;
+        case 'utils': logTypeClass = 'log-utils'; console.log(`[${timestamp}] [UTILS]: ${msg}`); break;
+        case 'ui': logTypeClass = 'log-ui'; console.log(`[${timestamp}] [UI]: ${msg}`); break;
+        default: console.log(`[${timestamp}] [INFO]: ${msg}`);
+    }
 
-        // WIE: .prepend() statt .appendChild()
-        // Neue Logs erscheinen oben. In Kombination mit `flex-direction: column-reverse`
-        // im CSS ist das "neueste" Element immer sichtbar.
-        panel.prepend(entry);
-
-    } catch (domError) {
-        console.error('FATAL: diagLog failed.', domError);
-        console.error('Original message:', message);
+    entry.className = `log-entry ${logTypeClass}`;
+    entry.textContent = `[${timestamp}] [${type.toUpperCase()}]: ${msg}`;
+    
+    logPanel.prepend(entry);
+    
+    // Log-Rotation
+    while (logPanel.children.length > MAX_LOG_ENTRIES) {
+        logPanel.removeChild(logPanel.lastChild);
     }
 }
 
 /**
- * Initialisiert die globalen Fanganetze für JavaScript-Laufzeitfehler.
+ * V11.5: Exportiert, damit app.js sie global nutzen kann.
+ * Loggt in die Konsole UND das Diagnose-Panel,
+ * BEVOR das Haupt-diagLog-Modul bereit ist.
+ */
+export function earlyDiagLog(msg, isError = false) {
+    try {
+        const panel = document.getElementById('diag-log-panel');
+        if (panel) {
+            const entry = document.createElement('span');
+            entry.className = `log-entry ${isError ? 'log-error' : 'log-bootstrap'}`;
+            entry.textContent = `[${new Date().toLocaleTimeString('de-DE')}] [BOOTSTRAP]: ${msg}`;
+            panel.prepend(entry);
+        } else {
+            console.log(`[BOOTSTRAP]: ${msg}`);
+        }
+    } catch (e) {
+        console.error("EarlyDiagLog FAILED:", e);
+    }
+}
+
+
+/**
+ * Installiert globale Error-Handler, um Abstürze abzufangen.
  */
 export function initGlobalErrorHandler() {
+    window.onerror = (message, source, lineno, colno, error) => {
+        const errorMsg = `Unbehandelter Fehler: ${message} (in ${source.split('/').pop()}@${lineno}:${colno})`;
+        diagLog(errorMsg, 'error');
+        return true; // Verhindert, dass der Fehler in der Konsole angezeigt wird (optional)
+    };
     
-    /**
-     * Fängt synchrone Laufzeit-Fehler.
-     * @returns {boolean} - true, um den Fehler zu unterdrücken.
-     */
-    window.onerror = (msg, url, lineNo, colNo, error) => {
-        const simpleUrl = url.substring(url.lastIndexOf('/') + 1);
-        const errorMsg = `${msg} (in ${simpleUrl} @ ${lineNo}:${colNo})`;
-        
-        diagLog(errorMsg, 'error');
-        return true; 
-    };
-
-    /**
-     * Fängt abgelehnte Promises, die nicht mit .catch() behandelt wurden.
-     * WICHTIG: Async/Await-Fehler (ohne try...catch) landen hier!
-     */
     window.onunhandledrejection = (event) => {
-        let reason = event.reason;
-        if (reason instanceof Error) {
-            reason = reason.stack || reason.message;
-        }
-        
-        const errorMsg = `Unhandled Promise Rejection: ${reason}`;
+        const errorMsg = `Unbehandelte Promise-Ablehnung: ${event.reason.message || event.reason}`;
         diagLog(errorMsg, 'error');
-        event.preventDefault();
     };
-
-    diagLog('Globale Error-Handler (onerror, onunhandledrejection) installiert.', 'info');
+    diagLog("Globale Error-Handler (onerror, onunhandledrejection) installiert.", "info");
 }
+ 
