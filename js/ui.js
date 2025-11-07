@@ -1,9 +1,10 @@
 /**
- * js/ui.js (Version 12 - "Live Advertisement Decoder")
+ * js/ui.js (Version 12.3 - "Render-Fix")
  * * ARCHITEKTUR-HINWEIS:
- * - V12: updateBeaconUI zeigt jetzt das neue Feld 'device.decodedData'
- * (aus utils.js V12) auf der Beacon-Karte an.
- * - (Basiert auf V11.9, alle DOM/Export/Highlighting-Fixes sind enthalten)
+ * - V12.3 FIX: Stellt sicher, dass 'renderTelemetry', 'renderBeaconData',
+ * und 'renderDecodedData' vorhanden sind und '' (leeren String)
+ * zurückgeben, wenn sie nichts zu rendern haben.
+ * - Behebt den 'undefined undefined'-Fehler im UI.
  */
 
 import { diagLog } from './errorManager.js';
@@ -18,7 +19,6 @@ import {
 
 
 // === MODULE STATE (V11.2) ===
-// ... (alle 'let'-Deklarationen bleiben unverändert) ...
 let scanButton, disconnectButton, viewToggle, sortButton, staleToggle,
     beaconDisplay, downloadButton, beaconView, inspectorView,
     inspectorDeviceName, inspectorRssiCanvas, inspectorAdList,
@@ -32,14 +32,12 @@ let appCallbacks = {};
 let inspectorRssiChart = null;
 let currentlyInspectedId = null;
 let currentWriteCharUuid = null;
-
 // V11.9: INDUSTRIAL_COMPANIES-Liste entfernt.
 
 
 // === PRIVATE HELPER: CHARTING ===
 function createSparkline(canvas) {
     const ctx = canvas.getContext('2d');
-    // 'Chart' ist global verfügbar (von index.html)
     return new Chart(ctx, {
         type: 'line',
         data: { labels: [], datasets: [{ data: [], borderColor: '#00faff', borderWidth: 2, pointRadius: 0, tension: 0.3 }] },
@@ -51,17 +49,58 @@ function createSparkline(canvas) {
     });
 }
 function updateSparkline(chart, rssi) {
-    // ... (unverändert)
+    const data = chart.data.datasets[0].data;
+    const labels = chart.data.labels;
+    data.push(rssi);
+    labels.push('');
+    if (data.length > 20) { data.shift(); labels.shift(); }
+    chart.update('none');
 }
 
-// === PRIVATE HELPER: RENDERING ===
+// === PRIVATE HELPER: RENDERING (V12.3 FIX) ===
 function renderTelemetry(telemetry) {
-    // ... (unverändert)
+    if (!telemetry || !telemetry.temperature) return ''; 
+    return `
+        <div class="beacon-telemetry">
+            <span>🌡️ ${telemetry.temperature} °C</span>
+            <span>💧 ${telemetry.humidity} %</span>
+            <span>🌬️ ${telemetry.pressure} hPa</span>
+            <span>🔋 ${telemetry.voltage} V</span>
+        </div>
+    `;
 }
 function renderBeaconData(beaconData) {
-    // ... (unverändert)
+    if (!beaconData || Object.keys(beaconData).length === 0) return '';
+    let html = '<div class="beacon-data">';
+    
+    if (beaconData.uuid) { // iBeacon
+        html += `
+            <div><strong>UUID:</strong> ${beaconData.uuid}</div>
+            <div><strong>Major:</strong> ${beaconData.major} | <strong>Minor:</strong> ${beaconData.minor}</div>
+        `;
+    }
+    if (beaconData.url) { // Eddystone-URL
+        html += `
+            <div><strong>URL:</strong> <a href="${beaconData.url}" target="_blank">${beaconData.url}</a></div>
+        `;
+    }
+    if (beaconData.uid) { // Eddystone-UID
+        html += `<div><strong>UID:</strong> ${beaconData.uid}</div>`;
+    }
+    if (beaconData.telemetry) { // Eddystone-TLM
+        const tlm = beaconData.telemetry;
+        html += `
+            <div class="beacon-telemetry">
+                <span>🔋 ${tlm.voltage} mV</span>
+                <span>🌡️ ${tlm.temperature} °C</span>
+                <span>📡 AdvCount: ${tlm.advCount}</span>
+                <span>⏱️ Uptime: ${tlm.uptime / 10} s</span>
+            </div>
+        `;
+    }
+    html += '</div>';
+    return html;
 }
-// V12 NEU: Helfer-Funktion für die dekodierten Daten
 function renderDecodedData(decodedData) {
     if (!decodedData) return '';
     return `
@@ -74,45 +113,238 @@ function renderDecodedData(decodedData) {
 
 // === PRIVATE HELPER: UI-AKTIONEN ===
 function sortBeaconCards() {
-    // ... (unverändert)
+    diagLog('Sortiere Karten nach RSSI...', 'utils');
+    const cards = Array.from(beaconDisplay.children);
+    cards.sort((a, b) => (+b.dataset.rssi || -1000) - (+a.dataset.rssi || -1000));
+    beaconDisplay.append(...cards);
 }
 function handleStaleToggle() {
-    // ... (unverändert)
+    isStaleModeActive = staleToggle.checked;
+    if (isStaleModeActive) {
+        beaconDisplay.classList.add('stale-mode');
+    } else {
+        beaconDisplay.classList.remove('stale-mode');
+    }
 }
 
 // === V11: MODAL-HELFER ===
 function showWriteModal(charUuid, charName) {
-    // ... (unverändert)
+    diagLog(`Öffne Write-Modal für ${charName} (${charUuid})`, 'ui');
+    currentWriteCharUuid = charUuid;
+    writeModalTitle.textContent = `Schreibe auf: ${charName}`;
+    writeModalInput.value = '';
+    writeModalTypeSelect.value = 'hex';
+    writeModalOverlay.style.display = 'flex';
+    writeModalInput.focus();
 }
 function hideWriteModal() {
-    // ... (unverändert)
+    writeModalOverlay.style.display = 'none';
+    currentWriteCharUuid = null;
 }
 
 // === PUBLIC API: VIEW-MANAGEMENT ===
 export function showView(viewName) {
-    // ... (unverändert)
+    if (viewName === 'inspector') {
+        if (beaconView) beaconView.style.display = 'none';
+        if (inspectorView) inspectorView.style.display = 'block';
+        if (viewToggle) viewToggle.disabled = false;
+    } else {
+        if (inspectorView) inspectorView.style.display = 'none';
+        if (beaconView) beaconView.style.display = 'block';
+        if (viewToggle) viewToggle.disabled = true;
+    }
 }
 
-/**
- * V11.7 FIX: Das 'export'-Schlüsselwort wurde hinzugefügt.
- */
 export function setGattConnectingUI(isConnecting, error = null, isConnected = false) {
-    // ... (unverändert)
+    if (isConnecting) {
+        gattConnectButton.disabled = true;
+        gattConnectButton.textContent = 'Verbinde...';
+        gattDisconnectButton.disabled = true;
+        if (gattTreeContainer) gattTreeContainer.innerHTML = '<p>Verbinde und lese Services...</p>';
+    } else if (isConnected) {
+        gattConnectButton.disabled = true;
+        gattConnectButton.textContent = 'Verbunden';
+        gattDisconnectButton.disabled = false;
+    } else {
+        if (appCallbacks.onGetDeviceLog) { 
+            const deviceLog = appCallbacks.onGetDeviceLog(currentlyInspectedId);
+            gattConnectButton.disabled = deviceLog ? !deviceLog.isConnectable : true;
+            gattConnectButton.textContent = 'Verbinden';
+        } else {
+            gattConnectButton.disabled = false;
+            gattConnectButton.textContent = 'Verbinden';
+        }
+        gattDisconnectButton.disabled = true;
+        
+        if (gattTreeContainer) {
+            if (error) {
+                gattTreeContainer.innerHTML = `<p style="color:var(--error-color);">Verbindung fehlgeschlagen: ${error}</p>`;
+            } else {
+                gattTreeContainer.innerHTML = '<p>Getrennt. Klicken Sie auf "Verbinden", um den GATT-Baum zu laden.</p>';
+            }
+        }
+    }
 }
 export function showInspectorView(deviceLog) {
-    // ... (unverändert)
+    currentlyInspectedId = deviceLog.id;
+    if (inspectorRssiChart) {
+        inspectorRssiChart.destroy();
+        inspectorRssiChart = null;
+    }
+    inspectorAdList.innerHTML = '';
+    gattSummaryBox.style.display = 'none';
+    gattTreeContainer.innerHTML = '<p>Noch nicht verbunden. Klicken Sie auf "Verbinden", um den GATT-Baum zu laden.</p>';
+    gattTreeContainer.style.display = 'block';
+    inspectorDeviceName.textContent = deviceLog.name || '[Unbenannt]';
+    gattConnectButton.disabled = !deviceLog.isConnectable;
+    gattConnectButton.textContent = 'Verbinden';
+    gattDisconnectButton.disabled = true;
+    const ctx = inspectorRssiCanvas.getContext('2d');
+    inspectorRssiChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: deviceLog.rssiHistory.map(h => h.t.substring(11, 19)),
+            datasets: [{
+                label: 'RSSI-Verlauf',
+                data: deviceLog.rssiHistory.map(h => h.r),
+                borderColor: '#00faff',
+                backgroundColor: 'rgba(0, 250, 255, 0.1)',
+                fill: true,
+                pointRadius: 1,
+                tension: 0.1
+            }]
+        },
+        options: {
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { display: false } },
+            scales: {
+                x: { ticks: { color: '#aaa' } },
+                y: { ticks: { color: '#aaa' }, suggestedMin: -100, suggestedMax: -30 }
+            }
+        }
+    });
+    if (deviceLog.uniqueAdvertisements.length === 0) {
+        inspectorAdList.innerHTML = '<div class="ad-entry">Keine Advertisement-Daten geloggt.</div>';
+    } else {
+        deviceLog.uniqueAdvertisements.forEach(ad => {
+            let content = '';
+            if (ad.type === 'nameOnly') {
+                content = `<strong>Typ:</strong> Nur Name`;
+            } else if (ad.type === 'manufacturerData') {
+                content = `<strong>Typ:</strong> Hersteller-Daten | <strong>ID:</strong> ${ad.companyId}<br><span class="payload">${ad.payload}</span>`;
+            } else if (ad.type === 'serviceData') {
+                content = `<strong>Typ:</strong> Service-Daten | <strong>UUID:</strong> ${ad.serviceUuid}<br><span class="payload">${ad.payload}</span>`;
+            }
+            inspectorAdList.innerHTML += `<div class="ad-entry">${content}</div>`;
+        });
+    }
+    showView('inspector');
 }
 export function renderGattTree(gattTree, deviceName, summary) {
-    // ... (unverändert, V11-Schreib-Buttons sind aktiv)
+    gattTreeContainer.innerHTML = ''; 
+    gattConnectButton.disabled = true;
+    gattConnectButton.textContent = 'Verbunden';
+    gattDisconnectButton.disabled = false;
+    
+    if (summary && Object.keys(summary).length > 0) {
+        let summaryHtml = '<h3>Geräte-Information</h3>';
+        for (const [key, value] of Object.entries(summary)) {
+            summaryHtml += `<div><strong>${key}:</strong> <span>${value}</span></div>`;
+        }
+        gattSummaryBox.innerHTML = summaryHtml;
+        gattSummaryBox.style.display = 'block';
+    } else {
+        gattSummaryBox.style.display = 'none';
+    }
+
+    gattTreeContainer.innerHTML = '<h3>GATT-Service-Baum</h3>'; 
+    if (gattTree.length === 0) {
+        gattTreeContainer.innerHTML += '<p>Keine Services auf diesem Gerät gefunden.</p>';
+        return;
+    }
+    
+    gattTree.forEach(service => {
+        const serviceEl = document.createElement('div');
+        serviceEl.className = 'gatt-service';
+        serviceEl.innerHTML = `
+            <div class="gatt-service-header">
+                <strong>Service: ${service.name}</strong>
+                <div>UUID: ${service.uuid}</div>
+            </div>
+        `;
+        
+        const charListEl = document.createElement('div');
+        charListEl.className = 'gatt-char-list';
+        
+        if (service.characteristics.length === 0) {
+            charListEl.innerHTML = '<p>Keine Characteristics gefunden.</p>';
+        } else {
+            service.characteristics.forEach(char => {
+                const charEl = document.createElement('div');
+                charEl.className = 'gatt-char';
+                
+                const props = char.properties;
+                const canRead = props.read ? '' : 'disabled';
+                const canWrite = (props.write || props.writeWithoutResponse) ? '' : 'disabled';
+                const canNotify = (props.notify || props.indicate) ? '' : 'disabled';
+                const valueElId = `val-${char.uuid}`;
+
+                charEl.innerHTML = `
+                    <div class="gatt-char-details">
+                        <div class="gatt-char-name">${char.name}</div>
+                        <div class="gatt-char-uuid">UUID: ${char.uuid}</div>
+                        <div class="gatt-char-value" id="${valueElId}">Wert: --</div>
+                    </div>
+                    <div class="gatt-char-actions">
+                        <button class="gatt-read-btn" ${canRead} data-uuid="${char.uuid}">Lesen</button>
+                        <button class="gatt-write-btn" ${canWrite} data-uuid="${char.uuid}">Schreiben</button>
+                        <button class="gatt-notify-btn" ${canNotify} data-uuid="${char.uuid}">Abonnieren</button>
+                    </div>
+                `;
+                
+                if (canRead === '') {
+                    charEl.querySelector('.gatt-read-btn').addEventListener('click', () => appCallbacks.onRead(char.uuid));
+                }
+                if (canWrite === '') {
+                    charEl.querySelector('.gatt-write-btn').addEventListener('click', () => {
+                        showWriteModal(char.uuid, char.name);
+                    });
+                }
+                if (canNotify === '') {
+                    charEl.querySelector('.gatt-notify-btn').addEventListener('click', (e) => {
+                        appCallbacks.onNotify(char.uuid);
+                        e.target.style.borderColor = 'var(--accent-color-main)';
+                        e.target.style.color = 'var(--accent-color-main)';
+                        e.target.disabled = true;
+                    });
+                }
+                charListEl.appendChild(charEl);
+            });
+        }
+        serviceEl.appendChild(charListEl);
+        gattTreeContainer.appendChild(serviceEl);
+    });
 }
 export function updateCharacteristicValue(charUuid, value, isNotifying = false, decodedValue = null) {
-    // ... (unverändert)
+    const valueEl = document.getElementById(`val-${charUuid}`);
+    if (!valueEl) return;
+    if (isNotifying) {
+        valueEl.textContent = "Wert: [Abonniert, warte auf Daten...]";
+        valueEl.style.color = "var(--warn-color)";
+        return;
+    }
+    if (value) {
+        const displayValue = decodedValue ? decodedValue : dataViewToText(value);
+        const hexVal = dataViewToHex(value);
+        valueEl.innerHTML = `Wert: ${displayValue} <br><small>(${hexVal})</small>`;
+        valueEl.style.color = "var(--text-color)";
+    }
 }
 
 // === PUBLIC API: SETUP & BEACON UPDATE ===
 
 /**
- * V11.2 PATCH: Alle getElementById-Aufrufe sind HIERHER verschoben.
+ * V11.12 PATCH
  */
 export function setupUIListeners(callbacks) {
     appCallbacks = callbacks;
@@ -178,15 +410,23 @@ export function setupUIListeners(callbacks) {
         hideWriteModal();
     });
     
-    diagLog('UI-Event-Listener (V11.7) erfolgreich gebunden.', 'info');
+    diagLog('UI-Event-Listener (V12.3) erfolgreich gebunden.', 'info');
 }
 
 export function setScanStatus(isScanning) {
-    // ... (unverändert)
+    if (isScanning) {
+        scanButton.disabled = true;
+        scanButton.textContent = 'Scanning...';
+        disconnectButton.disabled = false;
+    } else {
+        scanButton.disabled = false;
+        scanButton.textContent = 'Scan Starten';
+        disconnectButton.disabled = true;
+    }
 }
 
 /**
- * V12 PATCH: Zeigt 'decodedData' an.
+ * V12.3 PATCH: "Smart Highlighting" (V11.9) + "Render-Fix" (V12.3)
  */
 export function updateBeaconUI(deviceId, device) {
     let card = document.getElementById(deviceId);
@@ -210,6 +450,7 @@ export function updateBeaconUI(deviceId, device) {
             card.classList.add('data-beacon'); // Roter Rand
         }
         
+        // V12.3 FIX: render-Funktionen werden jetzt aufgerufen
         card.innerHTML = `
             <h3>${device.name}</h3>
             <div class="beacon-meta">
@@ -223,7 +464,8 @@ export function updateBeaconUI(deviceId, device) {
             </div>
             ${renderTelemetry(device.telemetry)}
             ${renderBeaconData(device.beaconData)}
-            ${renderDecodedData(device.decodedData)} <div class="sparkline-container"><canvas></canvas></div>
+            ${renderDecodedData(device.decodedData)}
+            <div class="sparkline-container"><canvas></canvas></div>
         `;
         beaconDisplay.prepend(card);
 
@@ -242,7 +484,6 @@ export function updateBeaconUI(deviceId, device) {
     const beaconDataEl = card.querySelector('.beacon-data');
     if (beaconDataEl) beaconDataEl.innerHTML = renderBeaconData(device.beaconData).trim();
     
-    // V12 NEU: Dekodierte Daten auch aktualisieren (falls sie sich ändern)
     const decodedDataEl = card.querySelector('.beacon-data-decoded');
     if (decodedDataEl) decodedDataEl.innerHTML = renderDecodedData(device.decodedData).trim();
 
