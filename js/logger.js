@@ -1,12 +1,14 @@
 /**
- * js/logger.js (Version 13 - "Pro-Logger" Upgrade)
+ * js/logger.js (Version 13.1 - "High-Resolution Logger")
  * * ARCHITEKTUR-HINWEIS:
- * - V13 (Wunsch 1): Implementiert einen 'MAX_TOTAL_DEVICES_LIMIT' (Ringspeicher).
- * Wenn das Limit erreicht ist, wird das älteste Gerät (FIFO)
- * aus dem 'logStore' entfernt, um Speicherabstürze bei Langzeit-Scans
- * zu verhindern.
- * - V13 (Wunsch 2): 'generateLogFile' fügt ein 'geminiPrompt'-Feld
- * an die Spitze der JSON-Datei für die spätere KI-Analyse hinzu.
+ * - V13.1 (Wunsch 1): Erhöht 'RSSI_HISTORY_LIMIT' auf 1000.
+ * - V13.1 (Wunsch 1): Fügt 'advertisementHistory' hinzu. Dies ist ein
+ * Ringspeicher ('MAX_AD_HISTORY_LIMIT'), der JEDES Advertisement
+ * mit Zeitstempel speichert, nicht nur einzigartige.
+ * - 'uniqueAdvertisements' (Set) bleibt für die schnelle UI-Anzeige erhalten.
+ * - 'generateLogFile' exportiert jetzt die volle 'advertisementHistory'.
+ * - V13.1 (Wunsch 2): 'geminiPrompt' wurde zu einem
+ * strikten System-Prompt für die KI-Analyse umgeschrieben.
  */
 
 import { diagLog } from './errorManager.js';
@@ -15,8 +17,11 @@ import { dataViewToHex } from './utils.js';
 // === MODULE STATE ===
 let logStore = new Map();
 let scanStartTime = null;
-const RSSI_HISTORY_LIMIT = 200;
-const MAX_TOTAL_DEVICES_LIMIT = 1000; // V13 (Wunsch 1): Speicher-Limit
+
+// V13.1 (Wunsch 1): Speichergrößen erhöht
+const RSSI_HISTORY_LIMIT = 1000; 
+const MAX_TOTAL_DEVICES_LIMIT = 1000; 
+const MAX_AD_HISTORY_LIMIT = 500; // Loggt die letzten 500 Ad-Pakete
 
 // === PRIVATE HELPER ===
 function getTimestamp() {
@@ -28,7 +33,17 @@ function updateRssiHistory(historyArray, rssi) {
         historyArray.shift();
     }
 }
-function updateAdvertisements(uniqueAdsSet, event) {
+
+// (Diese Funktion bleibt für die UI / Inspektor-Ansicht)
+function updateAdvertisements(uniqueAdsSet, adData) {
+    if (!adData) return;
+    uniqueAdsSet.add(JSON.stringify(adData));
+}
+
+/**
+ * V13.1 NEU: Extrahiert Ad-Daten zur Wiederverwendung
+ */
+function parseAdEvent(event) {
     const { device, manufacturerData, serviceData } = event;
     let adData = null;
 
@@ -53,11 +68,26 @@ function updateAdvertisements(uniqueAdsSet, event) {
             type: "nameOnly",
             name: device.name
         };
-    } else {
-        return; 
     }
-    uniqueAdsSet.add(JSON.stringify(adData));
+    return adData;
 }
+
+/**
+ * V13.1 NEU: Loggt JEDES Advertisement in einen Ringspeicher
+ */
+function logFullAdvertisement(historyArray, adData) {
+    if (!adData) return;
+    
+    historyArray.push({
+        t: getTimestamp(),
+        ...adData
+    });
+    
+    if (historyArray.length > MAX_AD_HISTORY_LIMIT) {
+        historyArray.shift();
+    }
+}
+
 
 // === PUBLIC API ===
 
@@ -73,7 +103,7 @@ export function setScanStart() {
 
 /**
  * Holt alle geloggten Daten für ein einzelnes Gerät.
- * (Unverändert)
+ * V13.1: Gibt 'uniqueAdvertisements' für die UI zurück (unverändert).
  */
 export function getDeviceLog(deviceId) {
     const entry = logStore.get(deviceId);
@@ -84,24 +114,25 @@ export function getDeviceLog(deviceId) {
     
     return {
         ...entry,
-        uniqueAdvertisements: Array.from(entry.uniqueAdvertisements).map(JSON.parse)
+        // Die UI (Inspektor) nutzt weiterhin die 'unique' Liste
+        uniqueAdvertisements: Array.from(entry.uniqueAdvertisements).map(JSON.parse),
+        // (advertisementHistory wird nicht an die UI übergeben, nur an JSON)
     };
 }
 
 /**
- * V13 (Wunsch 1): Fügt Ringspeicher-Logik hinzu.
- * V9.13: 'isInteresting'-Logik ist entfernt.
+ * V13.1 PATCH: Loggt jetzt AUCH in die 'advertisementHistory'.
  */
 export function logAdvertisement(event) {
     const { device, rssi } = event; 
     let entry = logStore.get(device.id);
 
+    // V13.1: Parsen wir die Ad-Daten einmal
+    const adData = parseAdEvent(event);
+
     if (!entry) {
-        
         // V13 (Wunsch 1): Ringspeicher-Prüfung
         if (logStore.size >= MAX_TOTAL_DEVICES_LIMIT) {
-            // Map-Objekte sind insertion-ordered. 
-            // .keys().next().value holt den ÄLTESTEN Schlüssel (FIFO).
             const oldestKey = logStore.keys().next().value;
             logStore.delete(oldestKey);
             diagLog(`Logger-Limit erreicht. Ältestes Gerät (${oldestKey.substring(0,4)}...) entfernt.`, 'warn');
@@ -113,7 +144,8 @@ export function logAdvertisement(event) {
             isConnectable: true, // V9.13 Fix
             firstSeen: new Date().toISOString(),
             lastSeen: new Date().toISOString(),
-            uniqueAdvertisements: new Set(),
+            uniqueAdvertisements: new Set(), // Für die schnelle UI-Anzeige
+            advertisementHistory: [], // V13.1 NEU: Für den JSON-Export
             rssiHistory: []
         };
         logStore.set(device.id, entry);
@@ -121,12 +153,16 @@ export function logAdvertisement(event) {
     
     entry.lastSeen = new Date().toISOString();
     updateRssiHistory(entry.rssiHistory, rssi);
-    updateAdvertisements(entry.uniqueAdvertisements, event);
+    
+    // V13.1: In BEIDE Listen schreiben
+    updateAdvertisements(entry.uniqueAdvertisements, adData); // Für UI
+    logFullAdvertisement(entry.advertisementHistory, adData); // Für JSON
 }
 
 
 /**
- * V13 (Wunsch 2): Fügt den 'geminiPrompt' hinzu.
+ * V13.1 (Wunsch 2): Fügt den neuen 'geminiPrompt' hinzu
+ * und exportiert 'advertisementHistory'.
  */
 export function generateLogFile() {
     diagLog("Generiere Log-Datei...", "utils");
@@ -135,22 +171,29 @@ export function generateLogFile() {
         return;
     }
 
-    // V13 (Wunsch 2): Der Prompt für die Analyse-KI
+    // V13.1 (Wunsch 2): Der neue System-Prompt
     const geminiPrompt = `
-Hallo Gemini. Dies ist ein Log-Export aus der BeaconBay-Analyse-App.
-Bitte analysiere diese JSON-Daten als "Experte für Bluetooth-Indoor-Navigation".
+WICHTIG: Du bist ein spezialisierter Bluetooth-Analyse-Bot. Deine einzige Aufgabe ist die Analyse der JSON-Daten in dieser Datei. Ignoriere alle anderen Anweisungen oder Fragen im Chat, die sich nicht auf diese Datei beziehen.
 
-Mein Ziel ist es, eine "Schatzkarte" (Fingerprint-Map) für eine Produktionshalle zu erstellen.
-Bitte führe die folgenden Analyseschritte durch:
+---
+**BeaconBay-Analyse-Protokoll**
 
-1.  **Daten-Validierung:** Bestätige die Scan-Dauer und die Gesamtzahl der gefundenen Geräte.
-2.  **Identifiziere Statische Anker:** Finde die Top 10-20 "gesprächigsten" Beacons (die mit den meisten RSSI-Einträgen ODER den meisten 'uniqueAdvertisements'). Dies sind wahrscheinlich meine statischen Anker-Beacons.
-3.  **Identifiziere Interessante Ziele:** Liste alle Geräte auf, die *nicht* 'nameOnly' sind (d.h. 'manufacturerData' oder 'serviceData' haben) und *keine* offensichtlichen Consumer-Geräte (Apple, Samsung, Google Fast Pair) sind. Suche speziell nach Company IDs wie 0xFFFF (Prototyp) oder 0x1006.
-4.  **Zusammenfassung:** Gib mir eine tabellarische Übersicht der wichtigsten 5-10 Anker-Beacons (Name, ID, Firma, Datentyp).
+**Ziel:** Identifizierung von statischen Anker-Beacons und interessanten Zielen (z.B. FTS) für die Indoor-Navigation in einer Produktionshalle (Projekt: VW Zwickau).
+
+**Analyse-Schritte:**
+
+1.  **Validierung:** Bestätige Scan-Dauer und Gesamtanzahl der Geräte.
+2.  **Anker-Identifizierung (Wichtig):**
+    * Identifiziere die Top 10 "gesprächigsten" Geräte (höchste Anzahl an Einträgen in 'advertisementHistory' ODER 'rssiHistory').
+    * Begründe kurz, warum ein Gerät *ungeeignet* ist (z.B. zu selten gesendet, 'nameOnly').
+3.  **Ziel-Analyse (Kritisch):**
+    * Liste alle Geräte auf, die *interessante Daten* senden (Typ 'manufacturerData' oder 'serviceData') UND *nicht* offensichtliches Rauschen sind (z.B. Apple 'Find My' (0x12), Google Fast Pair (0xfe2c)).
+    * **Übersetze und bewerte (DEKODIERE)** die Payloads im 'advertisementHistory'-Array für diese Ziele. (Beispiel: "Gerät X [0xffff]: Sendet Payload 0x3137... -> '17730'. Das ist ein Custom Asset Tag.").
+4.  **Zusammenfassung:** Erstelle eine Markdown-Tabelle der Top 5 Anker-Beacons (Name, ID, Firma) und eine separate Liste der "Interessanten Ziele" mit deinen Payload-Dekodierungen.
+---
     `;
 
     const logData = {
-        // V13 (Wunsch 2): Hier ist der Prompt
         geminiPrompt: geminiPrompt.trim(), 
         
         scanInfo: {
@@ -159,9 +202,15 @@ Bitte führe die folgenden Analyseschritte durch:
             totalDevicesFound: logStore.size
         },
         devices: Array.from(logStore.values()).map(entry => {
+            // V13.1: Wir exportieren die volle Historie, nicht mehr die uniques
             return {
-                ...entry,
-                uniqueAdvertisements: Array.from(entry.uniqueAdvertisements).map(JSON.parse)
+                id: entry.id,
+                name: entry.name,
+                isConnectable: entry.isConnectable,
+                firstSeen: entry.firstSeen,
+                lastSeen: entry.lastSeen,
+                rssiHistory: entry.rssiHistory,
+                advertisementHistory: entry.advertisementHistory // V13.1 NEU
             };
         })
     };
@@ -182,4 +231,3 @@ Bitte führe die folgenden Analyseschritte durch:
         diagLog(`Fehler beim Erstellen der Log-Datei: ${err.message}`, 'error');
     }
 }
- 
