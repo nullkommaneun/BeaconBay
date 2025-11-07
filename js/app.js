@@ -232,7 +232,6 @@ async function initApp() {
         window.__app_heartbeat = true;
 
     } catch (err) {
-        // Dieser 'catch' fängt jetzt den Import-Fehler von ui.js ab
         const errorMsg = `FATALER APP-LADEFEHLER: ${err.message}.`;
         appInitLogger(errorMsg, 'error');
         console.error(errorMsg, err);
@@ -240,3 +239,4 @@ async function initApp() {
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
+ 
