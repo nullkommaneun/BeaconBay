@@ -1,17 +1,14 @@
 /**
  * js/utils.js (Version 13.2 - "Payload-Fix")
  * * ARCHITEKTUR-HINWEIS:
- * - V13.2 FIX: Behebt den V12.2-Bug, bei dem der rohe 'payload'
- * für generische Manufacturer- und Service-Daten nicht gespeichert wurde.
- * - 'parseAdvertisementData' fügt jetzt 'data.beaconData.payload'
- * für ALLE Datentypen hinzu (nicht nur iBeacon/Eddystone).
- * - Dies behebt den "Payload fehlt"-Fehler in der JSON-Analyse.
+ * - V13.2 FIX: Stellt sicher, dass 'loadCompanyIDs' existiert.
+ * - V13.2 FIX: Stellt sicher, dass 'parseAdvertisementData'
+ * 'beaconData.payload' IMMER speichert (wichtig für Logger V13).
  */
 
 import { diagLog } from './errorManager.js';
 
 // === GLOBALE KONSTANTEN: BEACON-PARSING ===
-
 export const KNOWN_SERVICES = new Map([
     ['0x1800', 'Generic Access'],
     ['0x1801', 'Generic Attribute'],
@@ -24,27 +21,20 @@ export const KNOWN_SERVICES = new Map([
     ['0xfe9f', 'Google (Eddystone)'],
     ['0xfe2c', 'Google (Fast Pair)'],
 ]);
-
 export const KNOWN_CHARACTERISTICS = new Map([
-    // Device Information
     ['0x2a29', 'Manufacturer Name String'],
     ['0x2a24', 'Model Number String'],
     ['0x2a25', 'Serial Number String'],
     ['0x2a27', 'Hardware Revision String'],
     ['0x2a26', 'Firmware Revision String'],
     ['0x2a28', 'Software Revision String'],
-    // Battery Service
     ['0x2a19', 'Battery Level'],
-    // Health Thermometer
     ['0x2a1c', 'Temperature Measurement'],
 ]);
-
-// V12.2 FIX: Fehlende Map wieder hinzugefügt
 let companyIDs = new Map();
 
 
 // === DATENTYPEN-HELFER ===
-
 export function dataViewToHex(dataView) {
     if (!dataView) return '';
     let hex = '0x';
@@ -53,7 +43,6 @@ export function dataViewToHex(dataView) {
     }
     return hex.trim();
 }
-
 export function dataViewToText(dataView) {
     if (!dataView) return '';
     try {
@@ -62,9 +51,8 @@ export function dataViewToText(dataView) {
         return '[Hex] ' + dataViewToHex(dataView);
     }
 }
-
 export function hexStringToArrayBuffer(hex) {
-    hex = hex.replace(/^0x/, ''); // '0x' am Anfang entfernen
+    hex = hex.replace(/^0x/, '');
     if (hex.length % 2 !== 0) {
         throw new Error('Ungültige Hex-String-Länge.');
     }
@@ -74,7 +62,6 @@ export function hexStringToArrayBuffer(hex) {
     }
     return buffer.buffer;
 }
-
 export function decodeKnownCharacteristic(charUuid, value) {
     if (!value) return "N/A";
     
@@ -94,7 +81,6 @@ export function decodeKnownCharacteristic(charUuid, value) {
             return dataViewToHex(value);
     }
 }
-
 export function calculateDistance(txPower, rssi) {
     if (typeof txPower !== 'number' || typeof rssi !== 'number') {
         return '? m';
@@ -109,7 +95,6 @@ export function calculateDistance(txPower, rssi) {
 
 
 // === V12.2: "loadCompanyIDs" WIEDERHERGESTELLT ===
-
 export async function loadCompanyIDs() {
     try {
         const response = await fetch('company_ids.json');
@@ -126,7 +111,6 @@ export async function loadCompanyIDs() {
 
 
 // === V12: "SMARTER SCANNER" DECODER ===
-
 function decodeAppleData(dataView) {
     if (dataView.byteLength < 2) return null;
     const type = dataView.getUint8(0);
@@ -139,7 +123,6 @@ function decodeAppleData(dataView) {
         default: return `Apple (Typ 0x${type.toString(16)})`;
     }
 }
-
 function decodeGoogleFastPair(dataView) {
     return 'Google Fast Pair';
 }
@@ -166,7 +149,7 @@ export function parseAdvertisementData(event) {
 
     // 1. iBeacon-Prüfung (Apple)
     if (manufacturerData && manufacturerData.has(0x004C)) { // Apple
-        data.company = "Apple, Inc.";
+        data.company = companyIDs.get("76") || "Apple, Inc."; // V12.3: Nutze Map
         const appleData = manufacturerData.get(0x004C);
         data.decodedData = decodeAppleData(appleData);
         data.beaconData.payload = dataViewToHex(appleData); // V13.2 FIX
@@ -180,6 +163,7 @@ export function parseAdvertisementData(event) {
             if (!data.txPower) data.txPower = appleData.getInt8(24); 
             return data;
         }
+        return data; // V12.3: Stelle sicher, dass Apple-Geräte zurückgegeben werden
     }
 
     // 2. Eddystone-Prüfung (Google)
@@ -190,7 +174,7 @@ export function parseAdvertisementData(event) {
         data.beaconData.payload = dataViewToHex(eddystoneData); // V13.2 FIX
         
         const frameType = eddystoneData.getUint8(0) >> 4;
-        // ... (Restliche Eddystone-Logik)
+        // ... (Logik für UID, URL, TLM)
         return data;
     }
 
@@ -206,7 +190,7 @@ export function parseAdvertisementData(event) {
     
     // 4. Samsung
     if (manufacturerData && manufacturerData.has(0x0075)) { // Samsung
-        data.company = "Samsung Electronics Co., Ltd.";
+        data.company = companyIDs.get("117") || "Samsung Electronics Co., Ltd."; // V12.3
         data.type = "manufacturerData";
         const samsungData = manufacturerData.get(0x0075);
         data.decodedData = "Samsung (z.B. SmartThings Find)";
@@ -221,8 +205,7 @@ export function parseAdvertisementData(event) {
         data.company = companyIDs.get(companyId.toString()) || `Unbekannt (ID: 0x${companyId.toString(16).padStart(4, '0')})`;
         data.decodedData = `Hersteller-Daten (${dataView.byteLength} bytes)`;
         
-        // V13.2 FIX: Fehlenden Payload wiederhergestellt
-        data.beaconData.payload = dataViewToHex(dataView); 
+        data.beaconData.payload = dataViewToHex(dataView); // V13.2 FIX
         return data;
     }
 
@@ -234,19 +217,16 @@ export function parseAdvertisementData(event) {
         data.company = KNOWN_SERVICES.get(shortUuid) || "N/A (Service)";
         data.decodedData = `Service-Daten (${dataView.byteLength} bytes)`;
 
-        // V13.2 FIX: Fehlenden Payload wiederhergestellt
-        data.beaconData.payload = dataViewToHex(dataView);
+        data.beaconData.payload = dataViewToHex(dataView); // V13.2 FIX
         return data;
     }
     
     // 7. Nur-Name (z.B. Flipper)
     if (device.name) {
         data.type = "nameOnly";
-        // (Hier gibt es keinen Payload)
         return data;
     }
     
     diagLog(`Konnte Advertisement nicht parsen für ${device.id}`, 'warn');
     return null; 
 }
- 
