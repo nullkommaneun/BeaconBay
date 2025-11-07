@@ -1,11 +1,12 @@
 /**
- * js/browser.js (Version 12 - Geolocation-Hack)
+ * js/browser.js (Version 12.2 - "Timeout expired" Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - V12: Entfernt alle unzuverlässigen Audio- und WakeLock-Hacks.
- * - V12: Implementiert navigator.geolocation.watchPosition().
- * - Dies ist der stärkste Keep-Alive, den eine Web-App hat.
- * Er signalisiert dem OS eine "Navigations-Aufgabe".
- * - ERFORDERT: "Standort"-Berechtigung durch den Benutzer.
+ * - V12.2 FIX: Entfernt die 'timeout: 5000'-Option aus 'watchPosition'.
+ * - Der vorherige Timeout (5 Sek.) war kürzer als die Zeit,
+ * die der Benutzer benötigte, um BEIDE Berechtigungen (BLE + Standort)
+ * beim ersten Start zu erteilen.
+ * - Ohne Timeout wartet der Geolocation-Hack jetzt unbegrenzt
+ * auf die Erlaubnis, was den "Race Condition" behebt.
  */
 
 import { diagLog } from './errorManager.js';
@@ -17,7 +18,6 @@ let geoWatchId = null;
 
 /**
  * V12: Erfolgs-Callback für watchPosition.
- * Wir protokollieren es nur, wir speichern den Standort NICHT.
  */
 function geoSuccess(position) {
     diagLog(`Geolocation Keep-Alive aktiv. (Position wird *nicht* gespeichert/verwendet)`, 'utils');
@@ -25,7 +25,6 @@ function geoSuccess(position) {
 
 /**
  * V12: Fehler-Callback für watchPosition.
- * (z.B. wenn der Benutzer die Berechtigung verweigert)
  */
 function geoError(err) {
     diagLog(`Geolocation Keep-Alive FEHLER: ${err.message}`, 'error');
@@ -50,14 +49,14 @@ function startGeolocationFallback() {
         return;
     }
 
-    diagLog("Starte Geolocation Keep-Alive (V12)...", 'info');
+    diagLog("Starte Geolocation Keep-Alive (V12.2)...", 'info');
     try {
         geoWatchId = navigator.geolocation.watchPosition(
             geoSuccess, 
             geoError, 
             {
                 enableHighAccuracy: true, // Zwingt die GPS-Nutzung
-                timeout: 5000,
+                // V12.2 FIX: 'timeout: 5000,' entfernt.
                 maximumAge: 0 
             }
         );
@@ -82,10 +81,8 @@ function stopGeolocationFallback() {
 
 /**
  * Wird von app.js aufgerufen, um den Scan am Leben zu erhalten.
- * (Ruft jetzt den V12-Geolocation-Hack auf)
  */
 export function startKeepAlive() {
-    // Alte V2/V3 Hacks (Audio, WakeLock) sind entfernt.
     startGeolocationFallback();
 }
 
@@ -93,7 +90,6 @@ export function startKeepAlive() {
  * Wird von app.js aufgerufen, um die Keep-Alive-Hacks zu beenden.
  */
 export function stopKeepAlive() {
-    // Alte V2/V3 Hacks (Audio, WakeLock) sind entfernt.
     stopGeolocationFallback();
 }
  
