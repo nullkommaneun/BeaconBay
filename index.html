@@ -14,16 +14,22 @@
 <body>
 
     <header>
-        <h1><span class="logo-rocket">🚀</span>BeaconBay</h1>
+        <div class="logo-title">
+            <h1><span class="logo-icon">📡</span>BeaconBay</h1>
+            <span class="slogan">Professionelles BLE Analyse- & Mapping-Tool</span>
+        </div>
     </header>
 
     <main>
         <nav class="control-panel">
             <button id="scanButton" class="btn btn-primary">Scan Starten</button>
             <button id="disconnectButton" class="btn btn-secondary" disabled>Scan Stoppen</button>
-            <button id="downloadButton" class="btn">Log Herunterladen 💾</button>
+            <button id="downloadButton" class="btn">Download Log 💾</button>
             
-            <a href="https://nullkommaneun.github.io/Analysator/" target="_blank" class="btn">
+            <a href="https://nullkommaneun.github.io/Analysator/" 
+               target="_blank" 
+               class="btn"
+               title="Öffnet das externe Analyse-Tool in einem neuen Tab.">
                 Log Analysieren 📊
             </a>
             
@@ -31,7 +37,7 @@
             
             <div class="toggle-group">
                 <input type="checkbox" id="staleToggle" class="stale-toggle">
-                <label for="staleToggle">Inaktive Geräte ausblenden</label>
+                <label for="staleToggle">Inaktive ausblenden</label>
             </div>
         </nav>
 
@@ -115,3 +121,4 @@
 
 </body>
 </html>
+ 
