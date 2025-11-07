@@ -1,22 +1,16 @@
 /**
- * js/app.js (Version 12.3 - "Load Order" Fix)
+ * js/app.js (Version 12.3 - "Load Order" & "Permission Race" Fix)
  * * ARCHITEKTUR-HINWEIS:
- * - V12.3 FIX: 'await loadCompanyIDs()' wird jetzt VOR 'initBluetooth()'
- * aufgerufen.
- * - Dies behebt den "Firma: Unbekannt"-Bug, da die Namensliste
- * jetzt bereitsteht, wenn der Scan (und parseAdvertisementData) beginnt.
+ * - V12.3 FIX: 'await loadCompanyIDs()' wird jetzt VOR 'initBluetooth()' aufgerufen.
+ * - V12.1 FIX: 'startScan()' wird VOR 'startKeepAlive()' aufgerufen.
  */
 
 // Heartbeat
 window.__app_heartbeat = false;
 
-// V11.5 PATCH: Lade Logger SOFORT auf globaler Ebene.
 import { diagLog, initGlobalErrorHandler, earlyDiagLog } from './errorManager.js';
 initGlobalErrorHandler(); // Installiere globale Handler sofort
 
-/**
- * V11.5: Wrapper
- */
 function appInitLogger(msg, level = 'bootstrap') {
     try {
         diagLog(msg, level);
@@ -28,7 +22,6 @@ function appInitLogger(msg, level = 'bootstrap') {
 async function initApp() {
     appInitLogger('App-Initialisierung wird gestartet (DOM content loaded)...', 'info');
 
-    // V11.5: Definiere Variablen hier
     let startKeepAlive, stopKeepAlive;
     let loadCompanyIDs, hexStringToArrayBuffer; 
     let setupUIListeners, showInspectorView, showView, setGattConnectingUI; 
@@ -239,4 +232,3 @@ async function initApp() {
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
- 
