@@ -1,8 +1,9 @@
 /**
- * style.css - Das "BeaconBay Hacker Theme" (V11.11 - CSS-Fix)
+ * style.css - Das "BeaconBay Hacker Theme" (V11.12 - UI Feinschliff)
  *
- * V11.11: Behebt den "Flicker"-Bug (Stale vs. Data-Beacon)
- * V11.11: Stellt sicher, dass der "Ausblenden"-Schalter funktioniert.
+ * V11.12: Fügt Stile für den neuen Header (Logo + Slogan) hinzu.
+ * V11.12: Macht Buttons kleiner.
+ * (Basiert auf V11.11 Stabilitäts-Fix)
  */
 
 /* Import der Monospace-Schriftart */
@@ -41,7 +42,7 @@ html, body {
     overflow: hidden; 
 }
 
-/* ======== Layout-Container ======== */
+/* ======== V11.12: Layout-Container (Header-Fix) ======== */
 header {
     flex-shrink: 0; 
     padding: 0.75rem 1.5rem;
@@ -49,10 +50,36 @@ header {
     background-color: #111;
 }
 
+header .logo-title {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+}
+
 header h1 {
     color: var(--accent-color-main);
     text-shadow: 0 0 5px var(--accent-color-main);
+    font-size: 1.5rem;
 }
+
+header .logo-icon {
+    display: inline-block;
+    animation: pulse 2s infinite;
+}
+
+header .slogan {
+    font-size: 0.8rem;
+    color: var(--text-color-light);
+}
+
+/* Animation für das Logo */
+@keyframes pulse {
+    0% { transform: scale(1); text-shadow: 0 0 5px var(--accent-color-main); }
+    50% { transform: scale(1.1); text-shadow: 0 0 15px var(--accent-color-main); }
+    100% { transform: scale(1); text-shadow: 0 0 5px var(--accent-color-main); }
+}
+
 
 main {
     flex-grow: 1;
@@ -69,7 +96,7 @@ nav.control-panel {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 1rem;
+    gap: 0.75rem; /* Etwas enger */
 }
 
 #view-container {
@@ -84,16 +111,15 @@ footer {
     background-color: #000;
 }
 
-/* ======== Steuerelemente (Buttons, Checkbox) ======== */
-
-/* V11.10: 'a.btn' hinzugefügt */
+/* ======== V11.12: Steuerelemente (Buttons kleiner) ======== */
 .btn,
 a.btn {
     font-family: var(--font-main);
     background: transparent;
     border: 1px solid var(--accent-color-main);
     color: var(--accent-color-main);
-    padding: 0.5rem 1rem;
+    padding: 0.4rem 0.8rem; /* Kleineres Padding */
+    font-size: 0.9rem; /* Kleinere Schrift */
     cursor: pointer;
     transition: all 0.2s ease;
     text-decoration: none; 
@@ -139,6 +165,7 @@ a.btn:hover {
     display: flex;
     align-items: center;
     gap: 0.5rem;
+    font-size: 0.9rem; /* V11.12: Text angepasst */
 }
 
 input[type="checkbox"] {
@@ -227,12 +254,9 @@ input[type="checkbox"] {
 .beacon-card.stale {
     opacity: 0.3; /* 1. Dimmt die Karte */
 }
-/* 2. Nur "Name-Only"-Karten werden grau, Rote bleiben rot */
 .beacon-card.stale:not(.data-beacon) {
     border-left-color: #555;
 }
-
-/* 3. Der "Ausblenden"-Schalter (FIXED) */
 #beaconDisplay.stale-mode .beacon-card.stale {
     display: none;
 }
@@ -480,3 +504,4 @@ nav.inspector-nav {
     gap: 10px;
     margin-top: 20px;
 }
+ 
