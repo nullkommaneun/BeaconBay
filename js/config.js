@@ -1,5 +1,7 @@
 // ARCHITEKTUR-HINWEIS (V13.3N): Das Konfigurations-Modul.
 // DATEIPFAD: /js/config.js
+// V13.3EE HINWEIS: Diese Datei MUSS existieren,
+// da sie von fast jedem Modul importiert wird.
 
 export const AppConfig = {
     
@@ -38,24 +40,16 @@ export const AppConfig = {
 
     /**
      * V13.3N-REFAKTOR: Bluetooth-Modul (bluetooth.js)
-     * Enthält alle "Magic Numbers" aus V12.1
      */
     Bluetooth: {
-        // V12.1: Schwellenwert, nach dem ein Gerät als "inaktiv" (stale) markiert wird (10 Sek.)
         STALE_DEVICE_THRESHOLD_MS: 10000,
-        // V12.1: Intervall, in dem nach inaktiven Geräten gesucht wird (2 Sek.)
         STALE_CHECK_INTERVAL_MS: 2000,
-        
-        // V12.1: Scan-Option
         SCAN_ACCEPT_ALL: true,
-
-        // V11.9 "Smart Filter": Optionale Services für den Handshake
         HANDSHAKE_OPTIONAL_SERVICES: [
             '0000180a-0000-1000-8000-00805f9b34fb', // Device Information
             '0000180f-0000-1000-8000-00805f9b34fb'  // Battery Service
         ],
-        // V11.9 "Smart Filter": Fallback, wenn keine Services geloggt wurden
+        // V13.3V FIX: Tippfehler korrigiert
         HANDSHAKE_FALLBACK_ACCEPT_ALL: true
     }
 };
- 
