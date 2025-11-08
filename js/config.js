@@ -1,36 +1,24 @@
-// ARCHITEKTUR-HINWEIS (V13.3h): Das Konfigurations-Modul.
-// Diese Datei dient als "Single Source of Truth" für alle statischen
-// Einstellungen der BeaconBay-App. Sie wird von anderen Modulen importiert.
+// ARCHITEKTUR-HINWEIS (V13.3N): Das Konfigurations-Modul.
 // DATEIPFAD: /js/config.js
 
 export const AppConfig = {
     
     /**
-     * Einstellungen für das Logger-Modul (logger.js)
-     * (Eingeführt in V13.3c)
+     * Logger-Modul (logger.js)
+     * (V13.3c)
      */
     Logger: {
-        // V13.1-Einstellung: Maximale Geräte im Ringspeicher (Map)
         MAX_TOTAL_DEVICES: 1000,
-
-        // V13.1-Einstellung: Max. Advertisements *pro Gerät* (RingBuffer)
         MAX_HISTORY_PER_DEVICE: 500,
-
-        // V13.2-Einstellung: System-Prompt für den JSON-Export
-        SYSTEM_PROMPT: "Du bist ein professioneller BLE-Protokoll-Analyst. Analysiere das folgende JSON-Log von BeaconBay. Achte auf Geräte-Interaktionen, ungewöhnliche Payloads und Verbindungsabbrüche."
+        SYSTEM_PROMPT: "Du bist ein professioneller BLE-Protokoll-Analyst..."
     },
 
     /**
-     * V13.3e-REFAKTOR: Einstellungen für den ErrorManager (errorManager.js)
-     * Basiert auf dem Code von V11.5.
+     * ErrorManager (errorManager.js)
+     * (V13.3e)
      */
     ErrorManager: {
-        // V11.5-Einstellung: Die maximale Anzahl von Einträgen, die
-        // im Diagnose-Panel angezeigt werden, bevor rotiert wird.
         MAX_LOG_ENTRIES: 100,
-        
-        // V13.3-Standardmeldungen: Diese werden von app.js oder
-        // anderen Modulen verwendet und an diagLog(msg, 'error') übergeben.
         MSG_SCAN_START_FAIL: "Scan konnte nicht gestartet werden. (Bluetooth/Standort aktiv?)",
         MSG_CONNECTION_FAIL: "Verbindung fehlgeschlagen. Gerät nicht in Reichweite?",
         MSG_GATT_FAIL: "GATT-Interaktion fehlgeschlagen.",
@@ -40,23 +28,34 @@ export const AppConfig = {
     },
 
     /**
-     * V13.3h-REFAKTOR: Einstellungen für Browser-Fixes (browser.js)
-     * Diese Werte spiegeln die V12.2-Logik wider.
+     * Browser-Fixes (browser.js)
+     * (V13.3h)
      */
     Browser: {
-        // V12.2-Einstellung: Zwingt die Nutzung von GPS/WLAN (aggressiver Keep-Alive)
         GEO_WATCH_HIGH_ACCURACY: true,
-        
-        // V12.2-Einstellung: Verhindert die Nutzung einer zwischengespeicherten Position
         GEO_WATCH_MAXIMUM_AGE: 0 
     },
 
     /**
-     * V13.3-PLATZHALTER: Für das Refactoring von bluetooth.js
+     * V13.3N-REFAKTOR: Bluetooth-Modul (bluetooth.js)
+     * Enthält alle "Magic Numbers" aus V12.1
      */
     Bluetooth: {
-        // Hier kommen als nächstes die V11.9 "Smart Filter"-Werte hin.
-        // z.B. ACCEPT_ALL_DEVICES_FALLBACK: true
+        // V12.1: Schwellenwert, nach dem ein Gerät als "inaktiv" (stale) markiert wird (10 Sek.)
+        STALE_DEVICE_THRESHOLD_MS: 10000,
+        // V12.1: Intervall, in dem nach inaktiven Geräten gesucht wird (2 Sek.)
+        STALE_CHECK_INTERVAL_MS: 2000,
+        
+        // V12.1: Scan-Option
+        SCAN_ACCEPT_ALL: true,
+
+        // V11.9 "Smart Filter": Optionale Services für den Handshake
+        HANDSHAKE_OPTIONAL_SERVICES: [
+            '0000180a-0000-1000-8000-00805f9b34fb', // Device Information
+            '0000180f-0000-1000-8000-00805f9b34fb'  // Battery Service
+        ],
+        // V11.9 "Smart Filter": Fallback, wenn keine Services geloggt wurden
+        HANDSHAKE_FALLBACK_ACCEPT_ALL: true
     }
 };
  
