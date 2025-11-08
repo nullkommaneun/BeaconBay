@@ -58,16 +58,19 @@ async function initApp() {
         showInspectorView = uiModule.showInspectorView;
         showView = uiModule.showView;
         setGattConnectingUI = uiModule.setGattConnectingUI;
-        // V13.3P: (Unverändert) Callbacks holen
         const { onLogUpdated, onLogsCleared } = uiModule;
         
         diagLog('Lade Layer 3 (bluetooth.js)...', 'utils');
         const bluetoothModule = await import('./bluetooth.js');
-        // ... (bluetooth-Funktionen, unverändert)
         initBluetooth = bluetoothModule.initBluetooth;
         startScan = bluetoothModule.startScan;
         stopScan = bluetoothModule.stopScan;
-        // ... (Rest)
+        requestDeviceForHandshake = bluetoothModule.requestDeviceForHandshake;
+        connectWithAuthorizedDevice = bluetoothModule.connectWithAuthorizedDevice;
+        disconnect = bluetoothModule.disconnect;
+        readCharacteristic = bluetoothModule.readCharacteristic;
+        startNotifications = bluetoothModule.startNotifications;
+        writeCharacteristic = bluetoothModule.writeCharacteristic; 
 
         diagLog('Alle Module erfolgreich geladen.', 'info');
 
@@ -81,7 +84,6 @@ async function initApp() {
             diagLog("Aktion: Scan gestartet (via app.js)", "bt");
             
             // V13.3U FIX: Lösche den Speicher (Logger),
-            // was (via Callback) auch die UI (clearUI) löscht.
             clearLogs();
             
             try {
@@ -97,13 +99,11 @@ async function initApp() {
         };
 
         const stopScanAction = () => {
-            // ... (unverändert)
+            diagLog("Aktion: Scan gestoppt (via app.js)", "bt");
+            stopScan();
+            stopKeepAlive();
         };
         
-        /**
-         * V13.3U: Dieser Code ist korrekt, er schlug nur fehl,
-         * weil die Logs (deviceHistory) nicht mit der UI synchron waren.
-         */
         const inspectAction = (deviceId) => {
             diagLog(`Aktion: Inspiziere ${deviceId.substring(0, 4)}...`, 'ui');
             const deviceLog = getDeviceLog(deviceId);
@@ -114,19 +114,107 @@ async function initApp() {
             }
         };
         
-        // ... (Rest der Callbacks: gattConnect, gattDisconnect etc. V13.3P, unverändert) ...
+        const gattConnectAction = async (deviceId) => {
+            diagLog(`Aktion: GATT-Handshake für ${deviceId.substring(0, 4)}...`, 'bt');
+            stopScan();
+            stopKeepAlive();
+            
+            try {
+                const authorizedDevice = await requestDeviceForHandshake(deviceId);
+                if (!authorizedDevice) {
+                    diagLog('Handshake vom Benutzer abgelehnt oder fehlgeschlagen. Starte Scan neu...', 'bt');
+                    setGattConnectingUI(false, 'Handshake abgelehnt');
+                    scanAction(); 
+                    return; 
+                }
+                diagLog(`Handshake erfolgreich für ${authorizedDevice.name}. Verbinde...`, 'bt');
+                const success = await connectWithAuthorizedDevice(authorizedDevice);
+                if (!success) {
+                    diagLog('Verbindung trotz Handshake fehlgeschlagen. Starte Scan neu...', 'bt');
+                    scanAction(); 
+                }
+            } catch (err) {
+                 diagLog(AppConfig.ErrorManager.MSG_CONNECTION_FAIL + ` (${err.message})`, 'error');
+                 scanAction();
+            }
+        };
+        
+        const gattDisconnectAction = () => {
+            diagLog('Aktion: Trenne GATT-Verbindung (via app.js)', 'bt');
+            disconnect();
+        };
+        
+        const gattUnexpectedDisconnectAction = () => {
+            diagLog(AppConfig.ErrorManager.MSG_UNEXPECTED_DISCONNECT, 'warn');
+            scanAction();
+        };
 
+        const readAction = (charUuid) => {
+            diagLog(`Aktion: Lese Wert von ${charUuid}`, 'bt');
+            readCharacteristic(charUuid);
+        };
         
-        // --- Initialisierung (V13.3P Korrektur) ---
+        const notifyAction = (charUuid) => {
+            diagLog(`Aktion: Abonniere ${charUuid}`, 'bt');
+            startNotifications(charUuid);
+        };
+
+        const modalWriteSubmitAction = (charUuid, value, type) => {
+            diagLog(`Aktion: 'Modal-Schreiben' für ${charUuid}, Typ: ${type}, Wert: ${value}`, 'bt');
+            if (value === null || value.trim() === "") {
+                diagLog("Schreiben abgebrochen: Kein Wert.", 'ui');
+                return;
+            }
+            let dataBuffer;
+            try {
+                switch (type) {
+                    case 'hex':
+                        dataBuffer = hexStringToArrayBuffer(value);
+                        break;
+                    case 'text':
+                        const textEncoder = new TextEncoder();
+                        dataBuffer = textEncoder.encode(value);
+                        break;
+                    case 'decimal':
+                        const num = parseInt(value, 10);
+                        if (isNaN(num) || num < 0 || num > 255) {
+                            throw new Error("Dezimalwert muss zwischen 0 und 255 liegen (für 1 Byte).");
+                        }
+                        dataBuffer = new Uint8Array([num]).buffer;
+                        break;
+                    default:
+                        throw new Error(`Unbekannter Schreib-Typ: ${type}`);
+                }
+                writeCharacteristic(charUuid, dataBuffer);
+            } catch (e) {
+                diagLog(`Ungültige Eingabe: ${e.message}`, 'error');
+                alert(AppConfig.ErrorManager.MSG_GATT_FAIL + ` (Schreib-Eingabe: ${e.message})`);
+            }
+        };
         
+        const downloadAction = () => {
+            diagLog("Aktion: Download Log (via app.js)", "utils");
+            generateLogFile();
+        };
+
+        const viewToggleAction = () => {
+            diagLog("Aktion: Wechsle zur Beacon-Ansicht", "ui");
+            showView('beacon');
+            disconnect();
+        };
+        
+        // --- Initialisierung (V13.3U Korrektur) ---
+        
+        // V12.3 FIX: Lade IDs ZUERST
         diagLog('Lade Company IDs...', 'utils');
         await loadCompanyIDs();
         
+        // V13.3M FIX: Initialisiere Logger
         diagLog('Initialisiere Logger-Modul...', 'utils');
         initLogger({
             diagLog: diagLog,
             onLogUpdated: onLogUpdated, 
-            onLogsCleared: onLogsCleared // V13.3P: WICHTIG
+            onLogsCleared: onLogsCleared
         }); 
         
         diagLog('Initialisiere Bluetooth-Modul...', 'bt');
@@ -135,14 +223,20 @@ async function initApp() {
             onGetDeviceLog: getDeviceLog 
         }); 
 
-        // --- UI-Listener mit Callbacks verbinden (V13.3P) ---
+        // --- UI-Listener mit Callbacks verbinden ---
         diagLog('Verbinde UI-Listener... (V13.3U)', 'info');
         
         setupUIListeners({
             onScan: scanAction,
             onStopScan: stopScanAction,
             onInspect: inspectAction,
-            // ... (Rest der Callbacks, V13.3P, unverändert) ...
+            onGattConnect: gattConnectAction,
+            onGattDisconnect: gattDisconnectAction,
+            onViewToggle: viewToggleAction,
+            onRead: readAction,
+            onNotify: notifyAction,
+            onModalWriteSubmit: modalWriteSubmitAction, 
+            onDownload: downloadAction,
             onGetDeviceLog: getDeviceLog, 
             onSort: () => { diagLog("Sortieren (noch nicht implementiert)", "ui"); }, 
             onStaleToggle: () => {}
@@ -152,10 +246,11 @@ async function initApp() {
         window.__app_heartbeat = true;
 
     } catch (err) {
-        // ... (Fehlerbehandlung, V13.3P, unverändert) ...
+        const errorMsg = `FATALER APP-LADEFEHLER: ${err.message}.`;
+        diagLog(errorMsg, 'error');
+        console.error(errorMsg, err);
     }
 }
 
 // Event Listener
 window.addEventListener('DOMContentLoaded', initApp);
- 
