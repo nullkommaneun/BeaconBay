@@ -1,10 +1,9 @@
 /**
- * js/app.js (Version 13.3f - "ErrorManager Sync" & "Config Refactor")
+ * js/app.js (Version 13.3i - "ErrorManager Sync" & "Config Refactor")
  * * ARCHITEKTUR-HINWEIS:
- * - V13.3f: Synchronisiert mit errorManager.js (V13.3e).
+ * - V13.3i: Synchronisiert mit errorManager.js (V13.3e).
  * - Importiert und ruft initErrorManager() auf (V11.11 DOM-Ready-Fix).
- * - Entfernt den 'appInitLogger'-Wrapper (V13.3e macht ihn überflüssig).
- * - V13.3f: Importiert AppConfig für standardisierte Fehlermeldungen.
+ * - V13.3i: Importiert AppConfig für standardisierte Fehlermeldungen.
  * - V12.3: (Unverändert) Lädt Company IDs VOR Bluetooth.
  */
 
@@ -16,18 +15,18 @@ import { initErrorManager, diagLog, initGlobalErrorHandler, earlyDiagLog } from 
 // V13.3f-IMPORT: Lade die Konfiguration für Fehlermeldungen
 import { AppConfig } from './config.js';
 
-initGlobalErrorHandler(); // Installiere globale Handler sofort (V11.5)
+// V11.5: Installiere globale Handler sofort (falls etwas VOR DOMContentLoaded fehlschlägt)
+initGlobalErrorHandler(); 
 
-// V13.3f-HINWEIS: Der 'appInitLogger' Wrapper (V12.3) wird
-// nicht mehr benötigt, da V13.3e 'diagLog' robust genug ist.
-// function appInitLogger(...) // VERALTET
+// V11.5-FIX: Verwende earlyDiagLog für den frühestmöglichen Log-Punkt
+earlyDiagLog("app.js (V13.3i) geladen. Warte auf DOMContentLoaded...");
 
 async function initApp() {
-    // V13.3f-FIX: initErrorManager() MUSS als ERSTES aufgerufen werden,
+    // V13.3i-FIX: initErrorManager() MUSS als ERSTES aufgerufen werden,
     // sobald der DOM bereit ist (V11.11-Logik), damit 'diagLog' das Panel findet.
+    // Dies löscht auch die "initialisiert..." HTML-Nachricht.
     initErrorManager();
     
-    // V13.3f-FIX: Ersetze appInitLogger durch direkten Aufruf
     diagLog('App-Initialisierung wird gestartet (DOM content loaded)...', 'info');
 
     // Deklarationen (unverändert)
@@ -40,10 +39,10 @@ async function initApp() {
     let getDeviceLog, generateLogFile; 
 
     try {
-        // --- Dynamisches Laden der Module ---
+        // --- Dynamisches Laden der Module (V12.3) ---
         
-        // V13.3f-FIX: Verwende diagLog direkt
         diagLog('Lade Layer 1 (browser.js)...', 'utils');
+        // V13.3h HINWEIS: browser.js importiert jetzt selbst AppConfig
         const browserModule = await import('./browser.js');
         startKeepAlive = browserModule.startKeepAlive;
         stopKeepAlive = browserModule.stopKeepAlive;
@@ -54,11 +53,10 @@ async function initApp() {
         hexStringToArrayBuffer = utilsModule.hexStringToArrayBuffer; 
         
         diagLog('Lade Layer 1 (logger.js)...', 'utils');
+        // V13.3c HINWEIS: logger.js importiert jetzt selbst AppConfig
         const loggerModule = await import('./logger.js');
         getDeviceLog = loggerModule.getDeviceLog;
         generateLogFile = loggerModule.generateLogFile;
-        // V13.3f HINWEIS: logger.js (V13.3c) importiert und verwendet bereits 
-        // 'AppConfig' intern, wir müssen hier nichts weiter tun.
         
         diagLog('Lade Layer 2 (ui.js)...', 'utils');
         const uiModule = await import('./ui.js');
@@ -89,7 +87,7 @@ async function initApp() {
         const scanAction = async () => { 
             diagLog("Aktion: Scan gestartet (via app.js)", "bt");
             
-            // V13.3f-FIX: Nutze AppConfig für Fehlermeldungen
+            // V13.3i-FIX: Nutze AppConfig für Fehlermeldungen
             try {
                 const scanStarted = await startScan(); // V12.1
                 if (scanStarted) {
@@ -103,11 +101,19 @@ async function initApp() {
         };
 
         const stopScanAction = () => {
-            // ... (unverändert) ...
+            diagLog("Aktion: Scan gestoppt (via app.js)", "bt");
+            stopScan();
+            stopKeepAlive();
         };
         
         const inspectAction = (deviceId) => {
-            // ... (unverändert) ...
+            diagLog(`Aktion: Inspiziere ${deviceId.substring(0, 4)}... (Scan läuft)`, 'ui');
+            const deviceLog = getDeviceLog(deviceId);
+            if (deviceLog) {
+                showInspectorView(deviceLog);
+            } else {
+                diagLog(`FEHLER: Konnte Log-Daten für ${deviceId} nicht finden.`, 'error');
+            }
         };
         
         const gattConnectAction = async (deviceId) => {
@@ -116,7 +122,7 @@ async function initApp() {
             stopScan();
             stopKeepAlive();
             
-            // V13.3f-FIX: Nutze AppConfig für Fehlermeldungen
+            // V13.3i-FIX: Nutze AppConfig für Fehlermeldungen
             try {
                 const authorizedDevice = await requestDeviceForHandshake(deviceId);
             
@@ -141,19 +147,28 @@ async function initApp() {
         };
         
         const gattDisconnectAction = () => {
-            // ... (unverändert) ...
+            diagLog('Aktion: Trenne GATT-Verbindung (via app.js)', 'bt');
+            disconnect();
         };
         
         const gattUnexpectedDisconnectAction = () => {
-            // V13.3f-FIX: Nutze AppConfig
+            // V13.3i-FIX: Nutze AppConfig
             diagLog(AppConfig.ErrorManager.MSG_UNEXPECTED_DISCONNECT, 'warn');
             scanAction(); // Auto-Restart (V9.9)
         };
 
-        // ... (readAction, notifyAction unverändert) ...
+        const readAction = (charUuid) => {
+            diagLog(`Aktion: Lese Wert von ${charUuid}`, 'bt');
+            readCharacteristic(charUuid);
+        };
+        
+        const notifyAction = (charUuid) => {
+            diagLog(`Aktion: Abonniere ${charUuid}`, 'bt');
+            startNotifications(charUuid);
+        };
 
         const modalWriteSubmitAction = (charUuid, value, type) => {
-            // ... (Logik unverändert, aber wir fangen Fehler besser ab) ...
+            diagLog(`Aktion: 'Modal-Schreiben' für ${charUuid}, Typ: ${type}, Wert: ${value}`, 'bt');
             
             if (value === null || value.trim() === "") {
                 diagLog("Schreiben abgebrochen: Kein Wert.", 'ui');
@@ -162,24 +177,43 @@ async function initApp() {
 
             let dataBuffer;
             try {
-                // ... (Dein switch-case-Block, unverändert) ...
+                switch (type) {
+                    case 'hex':
+                        dataBuffer = hexStringToArrayBuffer(value);
+                        break;
+                    case 'text':
+                        const textEncoder = new TextEncoder();
+                        dataBuffer = textEncoder.encode(value);
+                        break;
+                    case 'decimal':
+                        const num = parseInt(value, 10);
+                        if (isNaN(num) || num < 0 || num > 255) {
+                            throw new Error("Dezimalwert muss zwischen 0 und 255 liegen (für 1 Byte).");
+                        }
+                        dataBuffer = new Uint8Array([num]).buffer;
+                        break;
+                    default:
+                        throw new Error(`Unbekannter Schreib-Typ: ${type}`);
+                }
                 
                 writeCharacteristic(charUuid, dataBuffer);
 
             } catch (e) {
-                // V13.3f-FIX: Nutze AppConfig
                 diagLog(`Ungültige Eingabe: ${e.message}`, 'error');
-                // V13.3f-FIX: Nutze AppConfig für die UI-Meldung
+                // V13.3i-FIX: Nutze AppConfig für die UI-Meldung
                 alert(AppConfig.ErrorManager.MSG_GATT_FAIL + ` (Schreib-Eingabe: ${e.message})`);
             }
         };
         
         const downloadAction = () => {
-            // ... (unverändert) ...
+            diagLog("Aktion: Download Log (via app.js)", "utils");
+            generateLogFile();
         };
 
         const viewToggleAction = () => {
-            // ... (unverändert) ...
+            diagLog("Aktion: Wechsle zur Beacon-Ansicht", "ui");
+            showView('beacon');
+            disconnect();
         };
         
         // --- Initialisierung ---
@@ -195,10 +229,22 @@ async function initApp() {
         }); 
 
         // --- UI-Listener mit Callbacks verbinden ---
-        diagLog('Verbinde UI-Listener... (V13.3f)', 'info');
+        diagLog('Verbinde UI-Listener... (V13.3i)', 'info');
         
         setupUIListeners({
-            // ... (alle Actions wie oben definiert) ...
+            onScan: scanAction,
+            onStopScan: stopScanAction,
+            onInspect: inspectAction,
+            onGattConnect: gattConnectAction,
+            onGattDisconnect: gattDisconnectAction,
+            onViewToggle: viewToggleAction,
+            onRead: readAction,
+            onNotify: notifyAction,
+            onModalWriteSubmit: modalWriteSubmitAction, 
+            onDownload: downloadAction,
+            onGetDeviceLog: getDeviceLog, 
+            onSort: () => {}, 
+            onStaleToggle: () => {} 
         });
         
         diagLog('BeaconBay ist initialisiert und bereit.', 'info');
@@ -206,11 +252,11 @@ async function initApp() {
 
     } catch (err) {
         const errorMsg = `FATALER APP-LADEFEHLER: ${err.message}.`;
-        // V13.3f-FIX: Verwende earlyDiagLog, falls initApp() *sehr* früh fehlschlägt
-        // (bevor initErrorManager() lief)
-        earlyDiagLog(errorMsg, true); // 'true' = isError
+        diagLog(errorMsg, 'error');
         console.error(errorMsg, err);
     }
 }
 
+// Event Listener (V11.11 "DOM-Ready"-Fix)
 window.addEventListener('DOMContentLoaded', initApp);
+ 
