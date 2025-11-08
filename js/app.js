@@ -1,48 +1,45 @@
 /**
- * js/app.js (Version 13.3i - "ErrorManager Sync" & "Config Refactor")
+ * js/app.js (Version 13.3P - "Refactor Complete")
  * * ARCHITEKTUR-HINWEIS:
- * - V13.3i: Synchronisiert mit errorManager.js (V13.3e).
- * - Importiert und ruft initErrorManager() auf (V11.11 DOM-Ready-Fix).
- * - V13.3i: Importiert AppConfig für standardisierte Fehlermeldungen.
+ * - V13.3P FIX: Übergibt das vollständige Callback-Objekt
+ * an setupUIListeners() (behebt "tote" Inspektor-Buttons).
+ * - V13.3M: Initialisiert initLogger() korrekt.
+ * - V13.3i: Synchronisiert mit errorManager.js (V13.3j).
  * - V12.3: (Unverändert) Lädt Company IDs VOR Bluetooth.
  */
 
 // Heartbeat
 window.__app_heartbeat = false;
 
-// V13.3f-IMPORT: Lade die *neue* initErrorManager Funktion
+// V13.3i IMPORTS
 import { initErrorManager, diagLog, initGlobalErrorHandler, earlyDiagLog } from './errorManager.js';
-// V13.3f-IMPORT: Lade die Konfiguration für Fehlermeldungen
 import { AppConfig } from './config.js';
 
-// V11.5: Installiere globale Handler sofort (falls etwas VOR DOMContentLoaded fehlschlägt)
+// V11.5: Installiere globale Handler sofort
 initGlobalErrorHandler(); 
 
 // V11.5-FIX: Verwende earlyDiagLog für den frühestmöglichen Log-Punkt
-earlyDiagLog("app.js (V13.3i) geladen. Warte auf DOMContentLoaded...");
+earlyDiagLog("app.js (V13.3P) geladen. Warte auf DOMContentLoaded...");
 
 async function initApp() {
-    // V13.3i-FIX: initErrorManager() MUSS als ERSTES aufgerufen werden,
-    // sobald der DOM bereit ist (V11.11-Logik), damit 'diagLog' das Panel findet.
-    // Dies löscht auch die "initialisiert..." HTML-Nachricht.
+    // V13.3i FIX: ErrorManager MUSS als ERSTES aufgerufen werden
     initErrorManager();
     
     diagLog('App-Initialisierung wird gestartet (DOM content loaded)...', 'info');
 
-    // Deklarationen (unverändert)
+    // Deklarationen (V13.3M)
     let startKeepAlive, stopKeepAlive;
     let loadCompanyIDs, hexStringToArrayBuffer; 
     let setupUIListeners, showInspectorView, showView, setGattConnectingUI; 
     let initBluetooth, startScan, stopScan, disconnect,
         readCharacteristic, startNotifications, writeCharacteristic; 
     let requestDeviceForHandshake, connectWithAuthorizedDevice;
-    let getDeviceLog, generateLogFile; 
+    let initLogger, getDeviceLog, generateLogFile; 
 
     try {
         // --- Dynamisches Laden der Module (V12.3) ---
         
         diagLog('Lade Layer 1 (browser.js)...', 'utils');
-        // V13.3h HINWEIS: browser.js importiert jetzt selbst AppConfig
         const browserModule = await import('./browser.js');
         startKeepAlive = browserModule.startKeepAlive;
         stopKeepAlive = browserModule.stopKeepAlive;
@@ -53,19 +50,20 @@ async function initApp() {
         hexStringToArrayBuffer = utilsModule.hexStringToArrayBuffer; 
         
         diagLog('Lade Layer 1 (logger.js)...', 'utils');
-        // V13.3c HINWEIS: logger.js importiert jetzt selbst AppConfig
         const loggerModule = await import('./logger.js');
+        initLogger = loggerModule.initLogger; 
         getDeviceLog = loggerModule.getDeviceLog;
         generateLogFile = loggerModule.generateLogFile;
         
         diagLog('Lade Layer 2 (ui.js)...', 'utils');
         const uiModule = await import('./ui.js');
         diagLog('Layer 2 (ui.js) erfolgreich geladen.', 'info');
-        
         setupUIListeners = uiModule.setupUIListeners;
         showInspectorView = uiModule.showInspectorView;
         showView = uiModule.showView;
         setGattConnectingUI = uiModule.setGattConnectingUI;
+        // V13.3P: Wir brauchen den Logger-Callback für die UI
+        const { onLogUpdated, onLogsCleared } = uiModule;
         
         diagLog('Lade Layer 3 (bluetooth.js)...', 'utils');
         const bluetoothModule = await import('./bluetooth.js');
@@ -86,8 +84,6 @@ async function initApp() {
 
         const scanAction = async () => { 
             diagLog("Aktion: Scan gestartet (via app.js)", "bt");
-            
-            // V13.3i-FIX: Nutze AppConfig für Fehlermeldungen
             try {
                 const scanStarted = await startScan(); // V12.1
                 if (scanStarted) {
@@ -107,7 +103,7 @@ async function initApp() {
         };
         
         const inspectAction = (deviceId) => {
-            diagLog(`Aktion: Inspiziere ${deviceId.substring(0, 4)}... (Scan läuft)`, 'ui');
+            diagLog(`Aktion: Inspiziere ${deviceId.substring(0, 4)}...`, 'ui');
             const deviceLog = getDeviceLog(deviceId);
             if (deviceLog) {
                 showInspectorView(deviceLog);
@@ -117,15 +113,12 @@ async function initApp() {
         };
         
         const gattConnectAction = async (deviceId) => {
-            diagLog(`Aktion: GATT-Handshake (Smart Filter) für ${deviceId.substring(0, 4)}... anfordern`, 'bt');
-            
+            diagLog(`Aktion: GATT-Handshake für ${deviceId.substring(0, 4)}...`, 'bt');
             stopScan();
             stopKeepAlive();
             
-            // V13.3i-FIX: Nutze AppConfig für Fehlermeldungen
             try {
                 const authorizedDevice = await requestDeviceForHandshake(deviceId);
-            
                 if (!authorizedDevice) {
                     diagLog('Handshake vom Benutzer abgelehnt oder fehlgeschlagen. Starte Scan neu...', 'bt');
                     setGattConnectingUI(false, 'Handshake abgelehnt');
@@ -152,7 +145,6 @@ async function initApp() {
         };
         
         const gattUnexpectedDisconnectAction = () => {
-            // V13.3i-FIX: Nutze AppConfig
             diagLog(AppConfig.ErrorManager.MSG_UNEXPECTED_DISCONNECT, 'warn');
             scanAction(); // Auto-Restart (V9.9)
         };
@@ -195,12 +187,9 @@ async function initApp() {
                     default:
                         throw new Error(`Unbekannter Schreib-Typ: ${type}`);
                 }
-                
                 writeCharacteristic(charUuid, dataBuffer);
-
             } catch (e) {
                 diagLog(`Ungültige Eingabe: ${e.message}`, 'error');
-                // V13.3i-FIX: Nutze AppConfig für die UI-Meldung
                 alert(AppConfig.ErrorManager.MSG_GATT_FAIL + ` (Schreib-Eingabe: ${e.message})`);
             }
         };
@@ -216,21 +205,30 @@ async function initApp() {
             disconnect();
         };
         
-        // --- Initialisierung ---
+        // --- Initialisierung (V13.3P Korrektur) ---
         
         // V12.3 FIX: Lade IDs ZUERST
         diagLog('Lade Company IDs...', 'utils');
         await loadCompanyIDs();
         
-        diagLog('Initialisiere Bluetooth-Modul (und Logger)...', 'bt');
+        // V13.3M FIX: Initialisiere Logger
+        diagLog('Initialisiere Logger-Modul...', 'utils');
+        initLogger({
+            diagLog: diagLog, // Für Log-Export-Fehler
+            onLogUpdated: onLogUpdated, // V13.3P: UI-Callback
+            onLogsCleared: onLogsCleared // V13.3P: UI-Callback
+        }); 
+        
+        diagLog('Initialisiere Bluetooth-Modul...', 'bt');
         initBluetooth({
             onGattDisconnected: gattUnexpectedDisconnectAction,
             onGetDeviceLog: getDeviceLog 
         }); 
 
         // --- UI-Listener mit Callbacks verbinden ---
-        diagLog('Verbinde UI-Listener... (V13.3i)', 'info');
+        diagLog('Verbinde UI-Listener... (V13.3P)', 'info');
         
+        // V13.3P FIX: Übergib die definierten Aktionen an die UI.
         setupUIListeners({
             onScan: scanAction,
             onStopScan: stopScanAction,
@@ -243,8 +241,8 @@ async function initApp() {
             onModalWriteSubmit: modalWriteSubmitAction, 
             onDownload: downloadAction,
             onGetDeviceLog: getDeviceLog, 
-            onSort: () => {}, 
-            onStaleToggle: () => {} 
+            onSort: () => { diagLog("Sortieren (noch nicht implementiert)", "ui"); }, 
+            onStaleToggle: () => {} // Wird intern von ui.js gehandhabt
         });
         
         diagLog('BeaconBay ist initialisiert und bereit.', 'info');
