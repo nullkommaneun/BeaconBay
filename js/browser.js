@@ -1,14 +1,15 @@
 /**
- * js/browser.js (Version 12.2 - "Timeout expired" Fix)
+ * js/browser.js (Version 13.3h - "Config Refactor")
  * * ARCHITEKTUR-HINWEIS:
- * - V12.2 FIX: Entfernt die 'timeout: 5000'-Option aus 'watchPosition'.
- * - Der vorherige Timeout (5 Sek.) war kürzer als die Zeit,
- * die der Benutzer benötigte, um BEIDE Berechtigungen (BLE + Standort)
- * beim ersten Start zu erteilen.
- * - Ohne Timeout wartet der Geolocation-Hack jetzt unbegrenzt
- * auf die Erlaubnis, was den "Race Condition" behebt.
+ * - V13.3h: Lagert "Magic Numbers" (V12.2-Logik) in config.js aus.
+ * - V12.2: (Logik unverändert) Verwendet aggressive Geo-Settings
+ * (HighAccuracy: true, MaxAge: 0), um den Scan am Leben zu erhalten.
  */
 
+// V13.3h-IMPORT: Lade die zentrale App-Konfiguration
+import { AppConfig } from './config.js';
+
+// V12.2-IMPORT: (Unverändert)
 import { diagLog } from './errorManager.js';
 
 // === MODULE STATE ===
@@ -17,26 +18,29 @@ let geoWatchId = null;
 // === PRIVATE HELPER ===
 
 /**
- * V12: Erfolgs-Callback für watchPosition.
+ * V12: Erfolgs-Callback (Unverändert)
  */
 function geoSuccess(position) {
-    diagLog(`Geolocation Keep-Alive aktiv. (Position wird *nicht* gespeichert/verwendet)`, 'utils');
+    // V13.3h: Leicht verbesserte Log-Nachricht für Klarheit
+    diagLog(`Geolocation Keep-Alive Tick (V13.3h).`, 'utils');
 }
 
 /**
- * V12: Fehler-Callback für watchPosition.
+ * V12: Fehler-Callback (Unverändert)
  */
 function geoError(err) {
-    diagLog(`Geolocation Keep-Alive FEHLER: ${err.message}`, 'error');
-    
-    // Wenn die Berechtigung verweigert wurde, versuchen wir es nicht erneut.
+    // V13.3h-FIX: Verwende die standardisierte Meldung aus AppConfig
     if (err.code === 1) { // 1 = PERMISSION_DENIED
-        stopKeepAlive();
+        diagLog(AppConfig.ErrorManager.MSG_LOCATION_SERVICE_FAIL + ` (Keine Berechtigung)`, 'error');
+        stopKeepAlive(); // Nicht erneut versuchen
+    } else {
+        diagLog(AppConfig.ErrorManager.MSG_LOCATION_SERVICE_FAIL + ` (${err.message})`, 'error');
     }
 }
 
 /**
  * V12: Startet den Geolocation-Watchdog.
+ * V13.3h: Verwendet Config-Werte.
  */
 function startGeolocationFallback() {
     if (!navigator.geolocation) {
@@ -49,15 +53,16 @@ function startGeolocationFallback() {
         return;
     }
 
-    diagLog("Starte Geolocation Keep-Alive (V12.2)...", 'info');
+    diagLog("Starte Geolocation Keep-Alive (V13.3h)...", 'info');
     try {
         geoWatchId = navigator.geolocation.watchPosition(
             geoSuccess, 
             geoError, 
             {
-                enableHighAccuracy: true, // Zwingt die GPS-Nutzung
-                // V12.2 FIX: 'timeout: 5000,' entfernt.
-                maximumAge: 0 
+                // V13.3h-REFAKTOR: Hole V12.2-Werte aus der AppConfig
+                enableHighAccuracy: AppConfig.Browser.GEO_WATCH_HIGH_ACCURACY,
+                maximumAge: AppConfig.Browser.GEO_WATCH_MAXIMUM_AGE
+                // V12.2-FIX: 'timeout' bleibt (absichtlich) undefiniert.
             }
         );
     } catch (err) {
@@ -66,7 +71,7 @@ function startGeolocationFallback() {
 }
 
 /**
- * V12: Stoppt den Geolocation-Watchdog.
+ * V12: Stoppt den Geolocation-Watchdog. (Unverändert)
  */
 function stopGeolocationFallback() {
     if (geoWatchId) {
@@ -77,19 +82,12 @@ function stopGeolocationFallback() {
 }
 
 
-// === PUBLIC API ===
+// === PUBLIC API === (Unverändert)
 
-/**
- * Wird von app.js aufgerufen, um den Scan am Leben zu erhalten.
- */
 export function startKeepAlive() {
     startGeolocationFallback();
 }
 
-/**
- * Wird von app.js aufgerufen, um die Keep-Alive-Hacks zu beenden.
- */
 export function stopKeepAlive() {
     stopGeolocationFallback();
 }
- 
