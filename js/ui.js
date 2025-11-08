@@ -191,7 +191,7 @@ export function updateBeaconUI(deviceId, device) {
     
     card.classList.remove('stale');
 }
-export function setCardStle(deviceId) {
+export function setCardStale(deviceId) {
     const card = document.getElementById(deviceId);
     if (card) card.classList.add('stale');
 }
