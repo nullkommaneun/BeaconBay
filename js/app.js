@@ -1,11 +1,11 @@
 /**
- * js/app.js (Version 13.3DD - "Callback Definition Fix")
+ * js/app.js (Version 13.3DD/GG - "Callback Definition Fix")
  * * ARCHITEKTUR-HINWEIS:
  * - V13.3DD FIX: Stellt die *vollständigen* Definitionen
  * der Callback-Funktionen (scanAction, inspectAction, etc.)
- * wieder her, die in V13.3CC fälschlicherweise als Platzhalter
- * (/* ... */) markiert wurden.
- * - (Behebt "gattUnexpectedDisconnectAction is not defined").
+ * wieder her.
+ * - (Behebt "gattUnexpectedDisconnectAction is not defined"
+ * UND den V13.3GG "SyntaxError" durch falsches Kopieren).
  * - V13.3CC: (Unverändert) Korrekter 'uiModule'-Import.
  */
 
@@ -17,7 +17,7 @@ import { initErrorManager, diagLog, initGlobalErrorHandler, earlyDiagLog } from 
 import { AppConfig } from './config.js';
 
 initGlobalErrorHandler(); 
-earlyDiagLog("app.js (V13.3DD) geladen. Warte auf DOMContentLoaded...");
+earlyDiagLog("app.js (V13.3GG) geladen. Warte auf DOMContentLoaded...");
 
 async function initApp() {
     initErrorManager();
