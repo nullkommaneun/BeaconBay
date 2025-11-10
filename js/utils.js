@@ -4,8 +4,7 @@
  * - V13.3JJ FIX: 'parseAdvertisementData' gibt jetzt *immer*
  * ein Datenobjekt zurück (niemals 'null').
  * - Anonyme Beacons (ohne Name/Daten) erhalten den Typ 'anonymous'.
- * - (Behebt den "Silent Failure"-Bug V13.3II, bei dem keine
- * Geräte angezeigt wurden).
+ * - (Behebt den "Silent Failure"-Bug V13.3II).
  * - V13.3Q: (Unverändert) 'lastSeen' ist ein 'new Date()'.
  */
 
@@ -15,12 +14,24 @@ import { diagLog } from './errorManager.js';
 export const KNOWN_SERVICES = new Map([
     ['0x1800', 'Generic Access'],
     ['0x1801', 'Generic Attribute'],
-    // ... (Rest der Map)
+    ['0x1805', 'Current Time Service'],
+    ['0x180a', 'Device Information'],
+    ['0x180d', 'Heart Rate'],
+    ['0x1809', 'Health Thermometer'],
+    ['0x180f', 'Battery Service'],
+    ['0x1816', 'Cycling Speed and Cadence'],
+    ['0xfe9f', 'Google (Eddystone)'],
+    ['0xfe2c', 'Google (Fast Pair)'],
 ]);
 export const KNOWN_CHARACTERISTICS = new Map([
     ['0x2a29', 'Manufacturer Name String'],
     ['0x2a24', 'Model Number String'],
-    // ... (Rest der Map)
+    ['0x2a25', 'Serial Number String'],
+    ['0x2a27', 'Hardware Revision String'],
+    ['0x2a26', 'Firmware Revision String'],
+    ['0x2a28', 'Software Revision String'],
+    ['0x2a19', 'Battery Level'],
+    ['0x2a1c', 'Temperature Measurement'],
 ]);
 let companyIDs = new Map();
 
@@ -116,7 +127,7 @@ export function parseAdvertisementData(event) {
             data.type = "iBeacon";
             // ... (Rest der iBeacon-Logik, unverändert)
         }
-        return data; // V13.2: (Wichtig)
+        return data;
     }
 
     // 2. Eddystone-Prüfung (Google)
@@ -171,9 +182,6 @@ export function parseAdvertisementData(event) {
     }
     
     // V13.3JJ FIX: "Accept All" Fallback
-    // Wenn wir hier sind, ist es ein anonymer Beacon.
-    // Wir *müssen* das Objekt zurückgeben, sonst bricht
-    // der "Silent Failure" (V13.3II) wieder aus.
     diagLog(`[Parser] Gerät ${device.id.substring(0,4)}... hat keine Daten (anonym).`, 'utils');
     data.type = "anonymous";
     return data; // <-- DER FIX
