@@ -1,11 +1,12 @@
 /**
- * js/utils.js (Version 13.3Q - "Timestamp Fix")
+ * js/utils.js (Version 13.3JJ - "Parser Fallback Fix")
  * * ARCHITEKTUR-HINWEIS:
- * - V13.3Q FIX: 'parseAdvertisementData' erzeugt jetzt 'new Date()'
- * für 'lastSeen'. Das 'timeStamp' vom Event (DOMHighResTimeStamp)
- * ist ein relativer Zeitstempel (seit Seiten-Laden) und
- * KEIN Unix-Zeitstempel.
- * - V13.2: (Unverändert) Speichert 'beaconData.payload'.
+ * - V13.3JJ FIX: 'parseAdvertisementData' gibt jetzt *immer*
+ * ein Datenobjekt zurück (niemals 'null').
+ * - Anonyme Beacons (ohne Name/Daten) erhalten den Typ 'anonymous'.
+ * - (Behebt den "Silent Failure"-Bug V13.3II, bei dem keine
+ * Geräte angezeigt wurden).
+ * - V13.3Q: (Unverändert) 'lastSeen' ist ein 'new Date()'.
  */
 
 import { diagLog } from './errorManager.js';
@@ -34,10 +35,23 @@ export function dataViewToHex(dataView) {
     return hex.trim();
 }
 export function dataViewToText(dataView) {
-    // ... (unverändert)
+    if (!dataView) return '';
+    try {
+        return new TextDecoder('utf-8').decode(dataView);
+    } catch (e) {
+        return '[Hex] ' + dataViewToHex(dataView);
+    }
 }
 export function hexStringToArrayBuffer(hex) {
-    // ... (unverändert)
+    hex = hex.replace(/^0x/, '');
+    if (hex.length % 2 !== 0) {
+        throw new Error('Ungültige Hex-String-Länge.');
+    }
+    const buffer = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+        buffer[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+    }
+    return buffer.buffer;
 }
 export function decodeKnownCharacteristic(charUuid, value) {
     // ... (unverändert)
@@ -72,23 +86,18 @@ function decodeGoogleFastPair(dataView) {
 }
 
 /**
- * V13.3Q FIX: 'lastSeen' ist jetzt ein 'new Date()'
- * V13.2 PATCH: (Unverändert) Speichert 'beaconData.payload'
+ * V13.3JJ FIX: Gibt 'null' nicht mehr zurück
+ * V13.3Q FIX: (Unverändert) 'lastSeen' ist 'new Date()'
  */
 export function parseAdvertisementData(event) {
-    // V13.3Q: Wir ignorieren 'timeStamp' (relativ)
-    const { device, rssi, txPower, /* timeStamp, */ manufacturerData, serviceData } = event;
+    const { device, rssi, txPower, manufacturerData, serviceData } = event;
 
     const data = {
         id: device.id,
         name: device.name || '[Unbenannt]',
         rssi: rssi,
         txPower: txPower || null,
-        
-        // V13.3Q FIX: Erzeuge ein echtes Datumsobjekt.
-        // 'timeStamp' vom Event ist nutzlos (relativ zur Ladezeit).
-        lastSeen: new Date(), 
-        
+        lastSeen: new Date(), // V13.3Q
         company: "N/A",
         type: "N/A", 
         decodedData: null, 
@@ -106,38 +115,52 @@ export function parseAdvertisementData(event) {
         if (appleData.byteLength === 25 && appleData.getUint8(0) === 0x02 && appleData.getUint8(1) === 0x15) {
             data.type = "iBeacon";
             // ... (Rest der iBeacon-Logik, unverändert)
-            return data;
         }
-        return data;
+        return data; // V13.2: (Wichtig)
     }
 
     // 2. Eddystone-Prüfung (Google)
-    if (serviceData && serviceData.has(0xFE9F)) { // Eddystone
-        // ... (unverändert)
+    if (serviceData && serviceData.has(0xFE9F)) {
+        data.company = "Google";
+        data.type = "Eddystone";
+        // ... (Rest der Eddystone-Logik, unverändert)
         return data;
     }
 
     // 3. Google Fast Pair (Service)
     if (serviceData && serviceData.has(0xFE2C)) {
-        // ... (unverändert)
+        data.company = "Google";
+        data.type = "serviceData";
+        // ... (Rest der Fast Pair-Logik, unverändert)
         return data;
     }
     
     // 4. Samsung
-    if (manufacturerData && manufacturerData.has(0x0075)) { // Samsung
-        // ... (unverändert)
+    if (manufacturerData && manufacturerData.has(0x0075)) {
+        data.company = companyIDs.get("117") || "Samsung Electronics Co., Ltd.";
+        data.type = "manufacturerData";
+        // ... (Rest der Samsung-Logik, unverändert)
         return data;
     }
 
     // 5. Andere Herstellerdaten
     if (manufacturerData && manufacturerData.size > 0) {
-        // ... (unverändert)
+        data.type = "manufacturerData";
+        const [companyId, dataView] = manufacturerData.entries().next().value;
+        data.company = companyIDs.get(companyId.toString()) || `Unbekannt (ID: 0x${companyId.toString(16).padStart(4, '0')})`;
+        data.decodedData = `Hersteller-Daten (${dataView.byteLength} bytes)`;
+        data.beaconData.payload = dataViewToHex(dataView);
         return data;
     }
 
     // 6. Andere Servicedaten
     if (serviceData && serviceData.size > 0) {
-        // ... (unverändert)
+        data.type = "serviceData";
+        const [uuid, dataView] = serviceData.entries().next().value;
+        const shortUuid = uuid.startsWith("0000") ? `0x${uuid.substring(4, 8)}` : uuid;
+        data.company = KNOWN_SERVICES.get(shortUuid) || `Unbekannter Service (${shortUuid})`;
+        data.decodedData = `Service-Daten (${dataView.byteLength} bytes)`;
+        data.beaconData.payload = dataViewToHex(dataView);
         return data;
     }
     
@@ -147,7 +170,11 @@ export function parseAdvertisementData(event) {
         return data;
     }
     
-    diagLog(`Konnte Advertisement nicht parsen für ${device.id}`, 'warn');
-    return null; 
+    // V13.3JJ FIX: "Accept All" Fallback
+    // Wenn wir hier sind, ist es ein anonymer Beacon.
+    // Wir *müssen* das Objekt zurückgeben, sonst bricht
+    // der "Silent Failure" (V13.3II) wieder aus.
+    diagLog(`[Parser] Gerät ${device.id.substring(0,4)}... hat keine Daten (anonym).`, 'utils');
+    data.type = "anonymous";
+    return data; // <-- DER FIX
 }
- 
