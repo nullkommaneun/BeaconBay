@@ -1,12 +1,12 @@
 /**
- * js/app.js (Version 13.3DD/GG - "Callback Definition Fix")
+ * js/app.js (Version 13.3II - "Named Export Fix")
  * * ARCHITEKTUR-HINWEIS:
- * - V13.3DD FIX: Stellt die *vollständigen* Definitionen
- * der Callback-Funktionen (scanAction, inspectAction, etc.)
- * wieder her.
- * - (Behebt "gattUnexpectedDisconnectAction is not defined"
- * UND den V13.3GG "SyntaxError" durch falsches Kopieren).
- * - V13.3CC: (Unverändert) Korrekter 'uiModule'-Import.
+ * - V13.3II FIX: Korrigiert den 'import' von 'ui.js'.
+ * - Verwendet 'import * as uiModule' (Namespace-Import),
+ * um 'uiModule.onLogUpdated' korrekt zu laden.
+ * - (Behebt den "Silent Failure"-Bug V13.3BB).
+ * - V13.3DD: (Unverändert) Stellt Callback-Definitionen wieder her.
+ * - V13.3U: (Unverändert) Ruft 'clearLogs()' auf.
  */
 
 // Heartbeat
@@ -17,7 +17,7 @@ import { initErrorManager, diagLog, initGlobalErrorHandler, earlyDiagLog } from 
 import { AppConfig } from './config.js';
 
 initGlobalErrorHandler(); 
-earlyDiagLog("app.js (V13.3GG) geladen. Warte auf DOMContentLoaded...");
+earlyDiagLog("app.js (V13.3II) geladen. Warte auf DOMContentLoaded...");
 
 async function initApp() {
     initErrorManager();
@@ -56,16 +56,18 @@ async function initApp() {
         clearLogs = loggerModule.clearLogs; 
         
         diagLog('Lade Layer 2 (ui.js)...', 'utils');
-        // V13.3CC FIX: (Unverändert) Namespace-Import
+        // V13.3II FIX: Verwende einen Namespace-Import (* as),
+        // um auf die benannten Exporte zuzugreifen.
         const uiModule = await import('./ui.js');
         diagLog('Layer 2 (ui.js) erfolgreich geladen.', 'info');
         
+        // V13.3II FIX: Weise die Funktionen aus dem Namespace-Objekt zu
         setupUIListeners = uiModule.setupUIListeners;
         showInspectorView = uiModule.showInspectorView;
         showView = uiModule.showView;
         setGattConnectingUI = uiModule.setGattConnectingUI;
-        onLogUpdated = uiModule.onLogUpdated; 
-        onLogsCleared = uiModule.onLogsCleared;
+        onLogUpdated = uiModule.onLogUpdated; // WICHTIG
+        onLogsCleared = uiModule.onLogsCleared; // WICHTIG
         
         diagLog('Lade Layer 3 (bluetooth.js)...', 'utils');
         const bluetoothModule = await import('./bluetooth.js');
@@ -209,6 +211,7 @@ async function initApp() {
         await loadCompanyIDs();
         
         diagLog('Initialisiere Logger-Modul...', 'utils');
+        // V13.3II: Diese Callbacks sind jetzt gültige Funktionen
         initLogger({
             diagLog: diagLog,
             onLogUpdated: onLogUpdated, 
@@ -217,12 +220,12 @@ async function initApp() {
         
         diagLog('Initialisiere Bluetooth-Modul...', 'bt');
         initBluetooth({
-            onGattDisconnected: gattUnexpectedDisconnectAction, // V13.3DD: Funktioniert jetzt
+            onGattDisconnected: gattUnexpectedDisconnectAction,
             onGetDeviceLog: getDeviceLog 
         }); 
 
         // --- UI-Listener mit Callbacks verbinden (V13.3CC, unverändert) ---
-        diagLog('Verbinde UI-Listener... (V13.3DD)', 'info');
+        diagLog('Verbinde UI-Listener... (V13.3II)', 'info');
         setupUIListeners({
             onScan: scanAction,
             onStopScan: stopScanAction,
