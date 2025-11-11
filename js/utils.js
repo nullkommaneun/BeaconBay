@@ -1,12 +1,11 @@
 /**
- * js/utils.js (Version 13.3PP - VW FTF-FIX V2 + Beacon 02a6)
+ * js/utils.js (Version 13.3OO - FLIPPER-FIX)
  *
  * - REPARATUR: Ersetzt die fehlerhafte Distanzberechnung.
- * - VW FTF-FIX V2: Implementiert die KORREKTE Tünkers-Analyse
- * (basierend auf der A-A-A-B-B-C-C Redundanz-Logik)
- * und ersetzt die fehlerhafte V1-Implementierung.
- * - Beacon 02a6 FIX: Fügt Erkennungslogik für das proprietäre
- * Beacon-System (ID 0x02a6) hinzu und dekodiert dessen Zähler.
+ * - VW FTF-FIX V2: Implementiert die KORREKTE Tünkers-Analyse (A-A-A-B-B-C-C).
+ * - FLIPPER-FIX: Fügt einen Parser für Flipper Devices (0x0590) hinzu,
+ * um den Flipper Zero als iBeacon-Referenzgerät für die Distanzmessung
+ * (txPower) zu erkennen.
  */
 
 import { diagLog } from './errorManager.js';
@@ -20,13 +19,10 @@ export const KNOWN_SERVICES = new Map([
 ]);
 
 export const KNOWN_CHARACTERISTICS = new Map([
-    // Generic Access
     ['00002a00-0000-1000-8000-00805f9b34fb', 'Device Name'],
     ['00002a01-0000-1000-8000-00805f9b34fb', 'Appearance'],
     ['00002a04-0000-1000-8000-00805f9b34fb', 'Peripheral Preferred Connection Parameters'],
-    // Battery Service
     ['00002a19-0000-1000-8000-00805f9b34fb', 'Battery Level'],
-    // Device Information
     ['00002a29-0000-1000-8000-00805f9b34fb', 'Manufacturer Name String'],
     ['00002a24-0000-1000-8000-00805f9b34fb', 'Model Number String'],
     ['00002a25-0000-1000-8000-00805f9b34fb', 'Serial Number String'],
@@ -188,7 +184,7 @@ function decodeGoogleFastPair(dataView) {
  * V13.3JJ FIX: (Unverändert) Gibt 'null' nicht mehr zurück
  * DISTANZ-FIX: Passt 'txPower' für iBeacons an
  * VW FTF-FIX V2: KORREKTE Tünkers-Logik (0x0118)
- * V13.3PP (NEU): Beacon 02a6 Logik hinzugefügt
+ * FLIPPER-FIX: Fügt Flipper-iBeacon-Prüfung hinzu (0x0590)
  */
 export function parseAdvertisementData(event) {
     const { device, rssi, txPower, manufacturerData, serviceData } = event;
@@ -253,10 +249,32 @@ export function parseAdvertisementData(event) {
         return data;
     }
 
+    // === START FLIPPER-REFERENZ (NEU) ===
+    // 5. Flipper (als iBeacon-Referenz)
+    if (manufacturerData && manufacturerData.has(0x0590)) { // 0x0590 = Flipper Devices
+        data.company = companyIDs.get("1424") || "Flipper Devices Inc."; // 1424 = 0x0590
+        data.type = "manufacturerData";
+        const flipperData = manufacturerData.get(0x0590);
+        data.beaconData.payload = dataViewToHex(flipperData);
+        
+        // ANNAHME: Flipper nutzt das *gleiche* iBeacon-Format wie Apple
+        if (flipperData.byteLength === 25 && flipperData.getUint8(0) === 0x02 && flipperData.getUint8(1) === 0x15) {
+            data.type = "iBeacon (Flipper)";
+            // Holen den kalibrierten Wert
+            const txPowerAt1m = flipperData.getInt8(22);
+            data.txPower = txPowerAt1m; // Der Schlüssel!
+            data.decodedData = decodeAppleData(flipperData); // Wir recyceln den Apple-Decoder
+        } else {
+            data.decodedData = "Flipper (Kein iBeacon)";
+        }
+        return data;
+    }
+    // === ENDE FLIPPER-REFERENZ ===
+
+
     // === START VW FTF-LOGIK (V2 - KORRIGIERT) ===
-    // 5. Tünkers FTF (VW-Spezifisch)
-    if (manufacturerData && manufacturerData.has(0x0118)) { // 0x0118 = Tünkers
-        // 0x0118 = 280 (dezimal). ID 0x0118 ist Radius Networks (Tünkers nutzt deren Hardware)
+    // 6. Tünkers FTF (VW-Spezifisch)
+    if (manufacturerData && manufacturerData.has(0x0118)) { // 0x0118 = Tünkers/Radius
         data.company = companyIDs.get("280") || "Radius Networks (Tünkers)";
         data.type = "manufacturerData";
         const payload = manufacturerData.get(0x0118);
@@ -272,70 +290,35 @@ export function parseAdvertisementData(event) {
             const c1 = payload.getUint8(5); // C
             const c2 = payload.getUint8(6); // C
 
-            // 1. VALIDIERUNG: A-A-A, B-B, C-C (Redundanz-Prüfung)
             const isRedundant = (a1 === a2) && (a2 === a3) &&
                                 (b1 === b2) &&
                                 (c1 === c2);
             
-            // 2. VALIDIERUNG: Logische Regel (A+1=B, B+1=C)
             const isSequential = (b1 === (a1 + 1)) && (c1 === (b1 + 1));
 
             if (isRedundant && isSequential) {
-                // ERFOLG! Dies ist ein FTF.
                 const tuenkersID = a1; // Die "logische Zahl" A
-                let ftfTyp = "FTF (Tünkers)"; // Standard-Typ
+                let ftfTyp = "FTF (Tünkers)"; 
 
-                // Klassifiziere basierend auf dem Gerätenamen
                 if (data.name.startsWith("IAA")) {
                     ftfTyp = "Transport FTF";
                 } else if (data.name.startsWith("IAC")) {
                     ftfTyp = "Stapler FTF";
                 }
                 
-                // Dies wird in der grünen Zeile auf der Karte angezeigt
                 data.decodedData = `${ftfTyp} (Tünkers-ID: ${tuenkersID})`;
-                // Setze einen speziellen Typ, damit die Karte in "style.css"
-                // die .data-beacon-Klasse (roter Rand) bekommt
                 data.type = "FTF (Tünkers)"; 
             } else {
-                // Tünkers, aber nicht das FTF-Muster
                 data.decodedData = "Tünkers (Ungültiges Muster)";
             }
         } else {
-            // Tünkers, aber falsche Payload-Länge
             data.decodedData = "Tünkers (Falsche Payload-Länge)";
         }
-        return data; // Wichtig: Verarbeite dieses Gerät und stoppe hier
+        return data; 
     }
     // === ENDE VW FTF-LOGIK ===
 
-    // === START LOGIK FÜR PROPRIETÄRES BEACON-SYSTEM (0x02a6) ===
-    else if (manufacturerData && manufacturerData.has(0x02A6)) { // 0x02A6 = 678
-        data.company = "Proprietäres Beacon (0x02a6)";
-        data.type = "manufacturerData";
-        const payload = manufacturerData.get(0x02A6);
-        data.beaconData.payload = dataViewToHex(payload);
-        
-        // Validierung (basierend auf unserer Analyse):
-        // Muss 10 Bytes lang sein und mit 0x0338 beginnen
-        if (payload.byteLength === 10 && payload.getUint8(0) === 0x03 && payload.getUint8(1) === 0x38) {
-            
-            // ENTSCHLÜSSELUNG:
-            // Der Zähler ist das 3. Byte (Index 2) des Payloads.
-            const counter = payload.getUint8(2); 
-            
-            // Setze den Klartext für die Anzeige in der App
-            data.decodedData = `Beacon-System (Zähler: ${counter})`; 
-            data.type = "Beacon (0x02a6)"; // Eigener Typ für potenzielles Styling
-            
-        } else {
-            data.decodedData = "Beacon 0x02a6 (Unbek. Format)";
-        }
-        return data; // Wichtig: Verarbeitung hier stoppen
-    }
-    // === ENDE NEUER BLOCK ===
-
-    // 6. Andere Herstellerdaten (war vorher 5.)
+    // 7. Andere Herstellerdaten (war vorher 5.)
     if (manufacturerData && manufacturerData.size > 0) {
         const companyId = manufacturerData.keys().next().value;
         const mfgData = manufacturerData.get(companyId);
@@ -346,7 +329,7 @@ export function parseAdvertisementData(event) {
         return data;
     }
 
-    // 7. Andere Servicedaten (war vorher 6.)
+    // 8. Andere Servicedaten (war vorher 6.)
     if (serviceData && serviceData.size > 0) {
         const serviceUuid = serviceData.keys().next().value;
         const srvData = serviceData.get(serviceUuid);
@@ -357,13 +340,13 @@ export function parseAdvertisementData(event) {
         return data;
     }
     
-    // 8. Nur-Name (war vorher 7.)
+    // 9. Nur-Name (war vorher 7.)
     if (device.name) {
         data.type = "nameOnly";
         return data;
     }
     
-    // 9. V13.3JJ FIX: (Unverändert) Fallback (war vorher 8.)
+    // 10. V13.3JJ FIX: (Unverändert) Fallback (war vorher 8.)
     diagLog(`[Parser] Gerät ${device.id.substring(0,4)}... hat keine Daten (anonym).`, 'utils');
     data.type = "anonymous";
     return data;
