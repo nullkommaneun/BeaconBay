@@ -1,12 +1,10 @@
 /**
- * js/ui.js (Version 13.3KK - "Global Scope Fix" - REPARIERT)
- * * ARCHITEKTUR-HINWEIS:
- * - V13.3KK FIX: 'createSparkline' und 'showInspectorView'
- * rufen jetzt 'new window.Chart(...)' statt 'new Chart(...)' auf.
- * - (Behebt "Chart is not defined" ReferenceError).
+ * js/ui.js (Version 13.3KK - REPARIERT - ARCHITEKTUR-FIX)
  *
  * - REPARATUR: Implementiert alle fehlenden UI-Rendering-Funktionen
- * (renderGattTree, showView, renderTelemetry, Modal-Logik, etc.)
+ * - ARCHITEKTUR-FIX: `sortBeaconCards` und `handleStaleToggle` werden
+ * exportiert und über app.js-Callbacks aufgerufen,
+ * um die unidirektionale Architektur wiederherzustellen.
  */
 
 import { diagLog } from './errorManager.js';
@@ -16,7 +14,7 @@ import {
     dataViewToText, 
     KNOWN_SERVICES,
     KNOWN_CHARACTERISTICS
-} from './utils.js'; // 'utils.js' ist jetzt repariert
+} from './utils.js'; 
 
 // === MODULE STATE (V13.3T, unverändert) ===
 let appCallbacks = {}; 
@@ -98,8 +96,10 @@ function renderDecodedData(decodedData) {
     `;
 }
 
-// === PRIVATE HELPER: UI-AKTIONEN (REPARIERT) ===
-function sortBeaconCards() {
+// === PRIVATE HELPER: UI-AKTIONEN (REPARIERT & ANGEPASST) ===
+
+// 1. ÄNDERUNG: 'export' hinzugefügt
+export function sortBeaconCards() {
     diagLog("Sortiere Karten nach RSSI...", 'ui');
     const cards = Array.from(beaconDisplay.children);
     cards.sort((a, b) => {
@@ -109,7 +109,9 @@ function sortBeaconCards() {
     });
     cards.forEach(card => beaconDisplay.appendChild(card));
 }
-function handleStaleToggle() {
+
+// 2. ÄNDERUNG: 'export' hinzugefügt
+export function handleStaleToggle() {
     isStaleModeActive = staleToggle.checked;
     if (isStaleModeActive) {
         beaconDisplay.classList.add('stale-mode');
@@ -151,6 +153,20 @@ export function showView(viewName) {
         }
     }
 }
+
+// === UX-VERBESSERUNG (Siehe Schritt 2) ===
+function setGattConnectingUIText() {
+     if (!gattConnectButton || !gattDisconnectButton) return;
+    
+    // Setze den Text basierend auf dem 'currentlyInspectedId'.
+    // Wenn wir ein Gerät inspizieren, weiß der Nutzer, was er verbinden will.
+    if (currentlyInspectedId) {
+        gattConnectButton.textContent = 'Verbinden (Gerät auswählen)...';
+    } else {
+        gattConnectButton.textContent = 'Verbinden';
+    }
+}
+
 export function setGattConnectingUI(isConnecting, error = null, isConnected = false) {
     // Diese Funktion war in deiner Version leer
     if (!gattConnectButton || !gattDisconnectButton) return;
@@ -166,7 +182,7 @@ export function setGattConnectingUI(isConnecting, error = null, isConnected = fa
     } else {
         // Nicht verbunden (oder Fehler)
         gattConnectButton.disabled = false;
-        gattConnectButton.textContent = 'Verbinden';
+        setGattConnectingUIText(); // Verwende den verbesserten Text
         gattDisconnectButton.disabled = true;
         if (error) {
             gattTreeContainer.innerHTML = `<p style="color:var(--error-color);">Verbindung fehlgeschlagen: ${error}</p>`;
@@ -190,7 +206,11 @@ export function showInspectorView(deviceLog) {
     gattTreeContainer.style.display = 'block';
     inspectorDeviceName.textContent = deviceLog.name || '[Unbenannt]';
     gattConnectButton.disabled = !deviceLog.isConnectable;
-    gattConnectButton.textContent = 'Verbinden';
+    
+    // === UX-VERBESSERUNG (Siehe Schritt 2) ===
+    // Wir teilen dem Nutzer mit, dass er das Gerät im Pop-up auswählen muss.
+    setGattConnectingUIText(); 
+    
     gattDisconnectButton.disabled = true;
     const ctx = inspectorRssiCanvas.getContext('2d');
     
@@ -345,15 +365,15 @@ export function setupUIListeners(callbacks) {
     modalWriteCancelBtn = document.getElementById('modal-write-cancel-btn');
     modalWriteSendBtn = document.getElementById('modal-write-send-btn');
     
-    // === Event Listeners (REPARIERT) ===
+    // === Event Listeners (REPARIERT & ANGEPASST) ===
     scanButton.addEventListener('click', callbacks.onScan);
     disconnectButton.addEventListener('click', callbacks.onStopScan);
     downloadButton.addEventListener('click', callbacks.onDownload);
     viewToggle.addEventListener('click', callbacks.onViewToggle);
     
-    // REPARIERT: Direkte UI-Handler hinzugefügt
-    sortButton.addEventListener('click', sortBeaconCards);
-    staleToggle.addEventListener('change', handleStaleToggle);
+    // 3. ÄNDERUNG: Rufe die Callbacks auf
+    sortButton.addEventListener('click', callbacks.onSort);
+    staleToggle.addEventListener('change', callbacks.onStaleToggle);
 
     // GATT-Inspektor-Buttons
     gattConnectButton.addEventListener('click', () => {
@@ -391,7 +411,7 @@ export function setupUIListeners(callbacks) {
         hideWriteModal();
     });
     
-    diagLog('UI-Event-Listener (V13.3KK - REPARIERT) erfolgreich gebunden.', 'info');
+    diagLog('UI-Event-Listener (V13.3KK - ARCHITEKTUR-FIX) erfolgreich gebunden.', 'info');
 }
 
 /**
