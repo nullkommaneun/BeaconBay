@@ -1,21 +1,17 @@
 /**
- * js/utils.js (Version 13.3OO - "Apple Typ Fix" - REPARIERT)
- * * ARCHITEKTUR-HINWEIS:
- * - V13.3OO FIX: Stellt sicher, dass *alle* Apple-Geräte
- * (nicht nur iBeacons) den 'type: "manufacturerData"' erhalten.
- * - (Behebt den "Typ: N/A"-Bug für Apple-Geräte).
- * - V13.3JJ: (Unverändert) "Parser Fallback Fix" (return data).
- * - V13.3Q: (Unverändert) 'lastSeen' ist ein 'new Date()'.
+ * js/utils.js (Version 13.3OO - DISTANZ-FIX)
  *
- * - REPARATUR: Implementiert alle fehlenden Hilfsfunktionen
- * (dataViewToHex, dataViewToText, loadCompanyIDs, etc.)
- * und füllt KNOWN_SERVICES / KNOWN_CHARACTERISTICS.
+ * - REPARATUR: Ersetzt die fehlerhafte Distanzberechnung durch
+ * das "Log-Distance Path Loss"-Modell.
+ * - Führt einen anpassbaren UMGEBUNGSFAKTOR (N) ein.
+ * - Zeigt "N/A" an, wenn keine kalibrierte TX-Power (bei 1m) verfügbar ist.
+ * - Passt parseAdvertisementData an, um die kalibrierte TX-Power
+ * (Byte 22) von iBeacons korrekt zu lesen.
  */
 
 import { diagLog } from './errorManager.js';
 
-// === GLOBALE KONSTANTEN (REPARIERT) ===
-// (Gefüllt mit gängigen Services/Characteristics für den GATT-Baum)
+// === GLOBALE KONSTANTEN (unverändert) ===
 export const KNOWN_SERVICES = new Map([
     ['00001800-0000-1000-8000-00805f9b34fb', 'Generic Access'],
     ['00001801-0000-1000-8000-00805f9b34fb', 'Generic Attribute'],
@@ -41,11 +37,8 @@ export const KNOWN_CHARACTERISTICS = new Map([
 
 let companyIDs = new Map();
 
-// === DATENTYPEN-HELFER (REPARIERT) ===
+// === DATENTYPEN-HELFER (unverändert) ===
 
-/**
- * Wandelt ein DataView-Objekt in einen Hexadezimal-String um.
- */
 export function dataViewToHex(dataView) {
     if (!dataView) return "";
     let hex = '';
@@ -56,9 +49,6 @@ export function dataViewToHex(dataView) {
     return hex.toUpperCase();
 }
 
-/**
- * Wandelt ein DataView-Objekt in einen lesbaren Text (UTF-8) um.
- */
 export function dataViewToText(dataView) {
     if (!dataView) return "";
     try {
@@ -69,9 +59,6 @@ export function dataViewToText(dataView) {
     }
 }
 
-/**
- * Wandelt einen Hex-String (z.B. "01FF") in ein ArrayBuffer um (für das Schreiben).
- */
 export function hexStringToArrayBuffer(hex) {
     hex = hex.replace(/[^0-9A-Fa-f]/g, '');
     if (hex.length % 2 !== 0) {
@@ -85,9 +72,6 @@ export function hexStringToArrayBuffer(hex) {
     return buffer.buffer;
 }
 
-/**
- * Versucht, bekannte Characteristic-Werte zu dekodieren.
- */
 export function decodeKnownCharacteristic(charUuid, value) {
     const shortUuid = `0x${charUuid.substring(4, 8).toUpperCase()}`;
     const normalizedUuid = charUuid.toLowerCase();
@@ -116,25 +100,57 @@ export function decodeKnownCharacteristic(charUuid, value) {
     return `Hex: ${dataViewToHex(value)}`;
 }
 
+// === DISTANZ-BERECHNUNG (REPARIERT) ===
+
 /**
- * Schätzt die Distanz basierend auf RSSI und TX Power.
+ * Der Umgebungsfaktor (N). Passe diesen Wert an,
+ * basierend auf deinen Flipper-Zero-Kalibrierungstests.
+ * 2.0 = Freifeld | 3.0 = Büro | 3.5-4.5 = Metallhalle/Hindernisse
  */
-export function calculateDistance(txPower, rssi) {
-    if (txPower == null || rssi == null) {
+const UMGEBUNGSFAKTOR = 3.5;
+
+/**
+ * Schätzt die Distanz basierend auf RSSI und kalibrierter TX Power.
+ * (Log-Distance Path Loss Model)
+ *
+ * @param {number | null} txPowerAt1m Kalibrierter RSSI-Wert bei 1 Meter (MUSS negativ sein, z.B. -59).
+ * @param {number} rssi Gemessener RSSI-Wert (z.B. -70).
+ * @returns {string} Die formatierte Distanz oder "N/A".
+ */
+export function calculateDistance(txPowerAt1m, rssi) {
+    // txPowerAt1m ist der *kalibrierte* RSSI-Wert bei 1 Meter.
+    // Wenn dieser Wert fehlt (null) oder ungültig ist (z.B. positiv),
+    // können wir die Distanz nicht berechnen.
+    if (txPowerAt1m == null || txPowerAt1m === 0 || rssi == null) {
         return 'N/A';
     }
-    
-    // Einfache Formel (kann ungenau sein)
-    const ratio = rssi * 1.0 / txPower;
-    if (ratio < 1.0) {
-        return Math.pow(ratio, 10).toFixed(2) + ' m (nah)';
-    } else {
-        const distance = (0.89976) * Math.pow(ratio, 7.7095) + 0.111;
-        return distance.toFixed(2) + ' m (fern)';
+
+    try {
+        // Log-Distance Path Loss Model:
+        // distance = 10 ^ ((txPowerAt1m - rssi) / (10 * N))
+        const exponent = (txPowerAt1m - rssi) / (10 * UMGEBUNGSFAKTOR);
+        const distance = Math.pow(10, exponent);
+        
+        let label = '';
+        if (distance < 1.0) {
+            label = ' (direkt)';
+        } else if (distance < 5.0) {
+            label = ' (nah)';
+        } else if (distance < 20.0) {
+            label = ' (mittel)';
+        } else {
+            label = ' (fern)';
+        }
+
+        return distance.toFixed(2) + ' m' + label;
+        
+    } catch (e) {
+        diagLog(`Distanz-Fehler: ${e.message}`, 'error');
+        return 'Fehler';
     }
 }
 
-// === V12.2: "loadCompanyIDs" (REPARIERT) ===
+// === V12.2: "loadCompanyIDs" (unverändert) ===
 export async function loadCompanyIDs() {
     try {
         const response = await fetch('companyIDs.json');
@@ -143,12 +159,9 @@ export async function loadCompanyIDs() {
         }
         const data = await response.json();
         
-        // Konvertiere das Objekt in eine Map für schnelleren Zugriff
-        // (Ignoriere Kommentare)
         companyIDs.clear();
         for (const key in data) {
             if (key.startsWith('0x')) {
-                // Konvertiere "0x004C" zu 76
                 const id = parseInt(key.substring(2), 16);
                 companyIDs.set(id.toString(), data[key]);
             }
@@ -160,11 +173,8 @@ export async function loadCompanyIDs() {
     }
 }
 
-// === V12: "SMARTER SCANNER" DECODER (REPARIERT) ===
+// === V12: "SMARTER SCANNER" DECODER (unverändert) ===
 
-/**
- * Dekodiert Apple-spezifische Daten (Basis-iBeacon).
- */
 function decodeAppleData(dataView) {
     if (dataView.byteLength < 2) return null;
 
@@ -186,9 +196,6 @@ function decodeAppleData(dataView) {
     return "Apple (Kein iBeacon)";
 }
 
-/**
- * Dekodiert Google Fast Pair Daten (Platzhalter).
- */
 function decodeGoogleFastPair(dataView) {
     // Hier könnte eine komplexe Dekodierung für Fast Pair stehen
     return "Google Fast Pair";
@@ -197,6 +204,7 @@ function decodeGoogleFastPair(dataView) {
 /**
  * V13.3OO FIX: Setzt 'type' für Apple
  * V13.3JJ FIX: (Unverändert) Gibt 'null' nicht mehr zurück
+ * DISTANZ-FIX: Passt 'txPower' für iBeacons an
  */
 export function parseAdvertisementData(event) {
     const { device, rssi, txPower, manufacturerData, serviceData } = event;
@@ -205,7 +213,9 @@ export function parseAdvertisementData(event) {
         id: device.id,
         name: device.name || '[Unbenannt]',
         rssi: rssi,
-        txPower: txPower || null,
+        // WICHTIG: Setze dies standardmäßig auf null.
+        // Dies ist die *kalibrierte TX-Power bei 1m*, NICHT event.txPower.
+        txPower: null, 
         lastSeen: new Date(), // V13.3Q
         company: "N/A",
         type: "N/A", 
@@ -217,27 +227,31 @@ export function parseAdvertisementData(event) {
     // 1. iBeacon-Prüfung (Apple)
     if (manufacturerData && manufacturerData.has(0x004C)) { // Apple (ID 76)
         data.company = companyIDs.get("76") || "Apple, Inc.";
-        
-        // V13.3OO FIX: Setze den Typ *sofort*
         data.type = "manufacturerData"; 
         
         const appleData = manufacturerData.get(0x004C);
-        data.decodedData = decodeAppleData(appleData); // REPARIERT: Funktion existiert jetzt
-        data.beaconData.payload = dataViewToHex(appleData); // REPARIERT: Funktion existiert jetzt
+        data.decodedData = decodeAppleData(appleData); 
+        data.beaconData.payload = dataViewToHex(appleData); 
 
         if (appleData.byteLength === 25 && appleData.getUint8(0) === 0x02 && appleData.getUint8(1) === 0x15) {
-            data.type = "iBeacon"; // Überschreibe mit spezifischerem Typ
-            data.txPower = dataView.getInt8(22); // Korrigiere TX-Power vom iBeacon-Paket
+            data.type = "iBeacon";
+            
+            // *** HIER IST DER WICHTIGE FIX ***
+            // iBeacons senden ihre kalibrierte TX-Power bei 1m an Byte 22.
+            const txPowerAt1m = appleData.getInt8(22);
+            data.txPower = txPowerAt1m; // Setze den korrekten Wert für die Distanzberechnung
         }
+        // Wenn es kein iBeacon ist (nur "Apple"), bleibt data.txPower null.
+        // Die Distanz wird als "N/A" angezeigt. Das ist korrekt.
         return data;
     }
 
     // 2. Eddystone (Google)
-    if (serviceData && serviceData.has(0xFE9F)) { // Eddystone Service UUID
+    if (serviceData && serviceData.has(0xFE9F)) { 
         data.company = "Google (Eddystone)";
         data.type = "serviceData";
         const eddystoneData = serviceData.get(0xFE9F);
-        data.beaconData.payload = dataViewToHex(eddystoneData); // REPARIERT
+        data.beaconData.payload = dataViewToHex(eddystoneData); 
         data.decodedData = "Eddystone (Dekodierung nicht implementiert)";
         return data;
     }
@@ -247,8 +261,8 @@ export function parseAdvertisementData(event) {
         data.company = "Google (Fast Pair)";
         data.type = "serviceData";
         const fastPairData = serviceData.get(0xFE2C);
-        data.beaconData.payload = dataViewToHex(fastPairData); // REPARIERT
-        data.decodedData = decodeGoogleFastPair(fastPairData); // REPARIERT
+        data.beaconData.payload = dataViewToHex(fastPairData); 
+        data.decodedData = decodeGoogleFastPair(fastPairData); 
         return data;
     }
     
@@ -257,20 +271,19 @@ export function parseAdvertisementData(event) {
         data.company = companyIDs.get("117") || "Samsung Electronics Co., Ltd.";
         data.type = "manufacturerData";
         const samsungData = manufacturerData.get(0x0075);
-        data.beaconData.payload = dataViewToHex(samsungData); // REPARIERT
+        data.beaconData.payload = dataViewToHex(samsungData); 
         data.decodedData = "Samsung (Dekodierung nicht implementiert)";
         return data;
     }
 
     // 5. Andere Herstellerdaten
     if (manufacturerData && manufacturerData.size > 0) {
-        // Nimm den ersten Eintrag
         const companyId = manufacturerData.keys().next().value;
         const mfgData = manufacturerData.get(companyId);
         
         data.company = companyIDs.get(companyId.toString()) || `Unbekannt (0x${companyId.toString(16).padStart(4, '0')})`;
         data.type = "manufacturerData";
-        data.beaconData.payload = dataViewToHex(mfgData); // REPARIERT
+        data.beaconData.payload = dataViewToHex(mfgData); 
         return data;
     }
 
@@ -281,7 +294,7 @@ export function parseAdvertisementData(event) {
         
         data.company = KNOWN_SERVICES.get(serviceUuid) || `Unbek. Service (${serviceUuid.substring(0, 8)}...)`;
         data.type = "serviceData";
-        data.beaconData.payload = dataViewToHex(srvData); // REPARIERT
+        data.beaconData.payload = dataViewToHex(srvData); 
         return data;
     }
     
@@ -296,4 +309,3 @@ export function parseAdvertisementData(event) {
     data.type = "anonymous";
     return data;
 }
- 
