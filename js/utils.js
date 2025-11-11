@@ -1,10 +1,12 @@
 /**
- * js/utils.js (Version 13.3OO - VW FTF-FIX V2)
+ * js/utils.js (Version 13.3PP - VW FTF-FIX V2 + Beacon 02a6)
  *
  * - REPARATUR: Ersetzt die fehlerhafte Distanzberechnung.
  * - VW FTF-FIX V2: Implementiert die KORREKTE Tünkers-Analyse
  * (basierend auf der A-A-A-B-B-C-C Redundanz-Logik)
  * und ersetzt die fehlerhafte V1-Implementierung.
+ * - Beacon 02a6 FIX: Fügt Erkennungslogik für das proprietäre
+ * Beacon-System (ID 0x02a6) hinzu und dekodiert dessen Zähler.
  */
 
 import { diagLog } from './errorManager.js';
@@ -186,6 +188,7 @@ function decodeGoogleFastPair(dataView) {
  * V13.3JJ FIX: (Unverändert) Gibt 'null' nicht mehr zurück
  * DISTANZ-FIX: Passt 'txPower' für iBeacons an
  * VW FTF-FIX V2: KORREKTE Tünkers-Logik (0x0118)
+ * V13.3PP (NEU): Beacon 02a6 Logik hinzugefügt
  */
 export function parseAdvertisementData(event) {
     const { device, rssi, txPower, manufacturerData, serviceData } = event;
@@ -305,6 +308,32 @@ export function parseAdvertisementData(event) {
         return data; // Wichtig: Verarbeite dieses Gerät und stoppe hier
     }
     // === ENDE VW FTF-LOGIK ===
+
+    // === START LOGIK FÜR PROPRIETÄRES BEACON-SYSTEM (0x02a6) ===
+    else if (manufacturerData && manufacturerData.has(0x02A6)) { // 0x02A6 = 678
+        data.company = "Proprietäres Beacon (0x02a6)";
+        data.type = "manufacturerData";
+        const payload = manufacturerData.get(0x02A6);
+        data.beaconData.payload = dataViewToHex(payload);
+        
+        // Validierung (basierend auf unserer Analyse):
+        // Muss 10 Bytes lang sein und mit 0x0338 beginnen
+        if (payload.byteLength === 10 && payload.getUint8(0) === 0x03 && payload.getUint8(1) === 0x38) {
+            
+            // ENTSCHLÜSSELUNG:
+            // Der Zähler ist das 3. Byte (Index 2) des Payloads.
+            const counter = payload.getUint8(2); 
+            
+            // Setze den Klartext für die Anzeige in der App
+            data.decodedData = `Beacon-System (Zähler: ${counter})`; 
+            data.type = "Beacon (0x02a6)"; // Eigener Typ für potenzielles Styling
+            
+        } else {
+            data.decodedData = "Beacon 0x02a6 (Unbek. Format)";
+        }
+        return data; // Wichtig: Verarbeitung hier stoppen
+    }
+    // === ENDE NEUER BLOCK ===
 
     // 6. Andere Herstellerdaten (war vorher 5.)
     if (manufacturerData && manufacturerData.size > 0) {
