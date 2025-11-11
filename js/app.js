@@ -1,12 +1,8 @@
 /**
- * js/app.js (Version 13.3II - "Named Export Fix")
- * * ARCHITEKTUR-HINWEIS:
- * - V13.3II FIX: Korrigiert den 'import' von 'ui.js'.
- * - Verwendet 'import * as uiModule' (Namespace-Import),
- * um 'uiModule.onLogUpdated' korrekt zu laden.
- * - (Behebt den "Silent Failure"-Bug V13.3BB).
- * - V13.3DD: (Unverändert) Stellt Callback-Definitionen wieder her.
- * - V13.3U: (Unverändert) Ruft 'clearLogs()' auf.
+ * js/app.js (Version 13.3II - "Named Export Fix" - ARCHITEKTUR-FIX)
+ *
+ * - ARCHITEKTUR-FIX: Importiert `sortBeaconCards` und `handleStaleToggle`
+ * aus ui.js und bindet sie an die Orchestrator-Callbacks.
  */
 
 // Heartbeat
@@ -17,7 +13,7 @@ import { initErrorManager, diagLog, initGlobalErrorHandler, earlyDiagLog } from 
 import { AppConfig } from './config.js';
 
 initGlobalErrorHandler(); 
-earlyDiagLog("app.js (V13.3II) geladen. Warte auf DOMContentLoaded...");
+earlyDiagLog("app.js (V13.3II - ARCH-FIX) geladen. Warte auf DOMContentLoaded...");
 
 async function initApp() {
     initErrorManager();
@@ -26,7 +22,8 @@ async function initApp() {
     // Deklarationen (V13.3U)
     let startKeepAlive, stopKeepAlive;
     let loadCompanyIDs, hexStringToArrayBuffer; 
-    let setupUIListeners, showInspectorView, showView, setGattConnectingUI; 
+    let setupUIListeners, showInspectorView, showView, setGattConnectingUI,
+        sortBeaconCards, handleStaleToggle; // <-- ARCH-FIX: Deklariert
     let initBluetooth, startScan, stopScan, disconnect,
         readCharacteristic, startNotifications, writeCharacteristic; 
     let requestDeviceForHandshake, connectWithAuthorizedDevice;
@@ -68,6 +65,10 @@ async function initApp() {
         setGattConnectingUI = uiModule.setGattConnectingUI;
         onLogUpdated = uiModule.onLogUpdated; // WICHTIG
         onLogsCleared = uiModule.onLogsCleared; // WICHTIG
+        
+        // <-- ARCH-FIX: Importiere die UI-Handler
+        sortBeaconCards = uiModule.sortBeaconCards;
+        handleStaleToggle = uiModule.handleStaleToggle;
         
         diagLog('Lade Layer 3 (bluetooth.js)...', 'utils');
         const bluetoothModule = await import('./bluetooth.js');
@@ -225,7 +226,7 @@ async function initApp() {
         }); 
 
         // --- UI-Listener mit Callbacks verbinden (V13.3CC, unverändert) ---
-        diagLog('Verbinde UI-Listener... (V13.3II)', 'info');
+        diagLog('Verbinde UI-Listener... (V13.3II - ARCH-FIX)', 'info');
         setupUIListeners({
             onScan: scanAction,
             onStopScan: stopScanAction,
@@ -238,8 +239,10 @@ async function initApp() {
             onModalWriteSubmit: modalWriteSubmitAction, 
             onDownload: downloadAction,
             onGetDeviceLog: getDeviceLog, 
-            onSort: () => { diagLog("Sortieren (noch nicht implementiert)", "ui"); }, 
-            onStaleToggle: () => {}
+            
+            // <-- ARCH-FIX: Binde die importierten Funktionen
+            onSort: sortBeaconCards, 
+            onStaleToggle: handleStaleToggle
         });
         
         diagLog('BeaconBay ist initialisiert und bereit.', 'info');
@@ -253,3 +256,4 @@ async function initApp() {
 }
 
 window.addEventListener('DOMContentLoaded', initApp);
+ 
