@@ -1,8 +1,12 @@
 {
+  "__comment_common": "--- Gängige Hersteller (Apple, Google, etc.) ---",
   "0x004C": "Apple, Inc.",
-  "0x0499": "Ruuvi Innovations Ltd.",
+  "0x00E0": "Google",
+  "0x0075": "Samsung Electronics Co., Ltd.",
   "0x0006": "Microsoft",
-  
+  "0x0499": "Ruuvi Innovations Ltd.",
+  "0x0590": "Flipper Devices Inc.",
+
   "__comment_industrial": "--- Industrielle Chip-Hersteller ---",
   "0x0059": "Nordic Semiconductor ASA",
   "0x000D": "Texas Instruments",
@@ -16,5 +20,6 @@
   "0x0138": "Robert Bosch GmbH",
   "0x0555": "KUKA AG",
   "0x04D6": "Phoenix Contact",
-  "0x027A": "Murata Manufacturing Co., Ltd."
+  "0x027A": "Murata Manufacturing Co., Ltd.",
+  "0x0118": "Radius Networks, Inc. (Tünkers FTF)"
 }
