@@ -1,11 +1,10 @@
 /**
- * js/logger.js (Version 13.3X - "diagLog Import Fix")
+ * js/logger.js (Version 13.3X - "diagLog Import Fix" - VW MOD)
  * * ARCHITEKTUR-HINWEIS:
  * - V13.3X FIX: Fügt den fehlenden 'diagLog'-Import hinzu.
  * - (Behebt "diagLog is not defined" Absturz in clearLogs()).
- * - V13.3U: (Unverändert) 'clearLogs()' löst Callback aus.
- * - V13.3R: (Unverändert) Baut ein vollständiges 'deviceData'-Objekt.
- * - V13.3P: (Unverändert) Speichert 'rssiHistory' als Objekt-Array.
+ * - VW MOD: Ersetzt den generischen System-Prompt beim Export
+ * durch einen spezifischen VW-FTF-Analyse-Prompt.
  */
 
 // V13.3X-IMPORTS:
@@ -127,19 +126,52 @@ export function clearLogs() {
 }
 
 /**
- * V13.3R: (unverändert)
+ * V13.3R: (ANGEPASST FÜR VW-PROMPT)
  */
 export async function generateLogFile() {
     console.log("[Logger] Generiere Log-Datei...");
+
+    // === START VW-MOD ===
+    // Definiere den spezifischen Prompt basierend auf deinen Anweisungen
+    const vwAnalysisPrompt = `
+Du bist ein professioneller BLE-Protokoll-Analyst bei Volkswagen Sachsen.
+Deine Aufgabe ist es, die folgenden Log-Daten zu analysieren und FTF (Fahrerlose Transportfahrzeuge) zu identifizieren.
+
+**Dein Kontext:**
+Bei uns in der Logistik gibt es mehre FTS. Wir haben zwei verschiedene Typen am FTF:
+1.  **Transport FTF:** Haben eine Kennung im Muster "IAAXXX" (z.B. IAA025). IAA ist immer gleich, XXX sind Zahlen.
+2.  **Stapler FTF:** Haben eine Kennung im Muster "IACXXX".
+
+**Dein Befehl:**
+1.  Durchsuche alle 'devices' in diesem Log. Finde die Kandidaten, bei denen es am wahrscheinlichsten ist, dass es sich um ein FTF handelt (suche nach den Mustern IAAXXX oder IACXXX).
+2.  Filtere die Ausgabe und zeige **nur** diese wahrscheinlichen FTF-Kandidaten an.
+3.  Prüfe für jeden Kandidaten:
+    * Wird die Kennung (IAAXXX oder IACXXX) direkt im 'deviceName' oder in den 'advertisementHistory' (Payloads) gesendet?
+    * Wie ist der vollständige 'deviceName'?
+    * Wie oft wurde das Gerät gesehen ('advertisementHistory.length' oder 'rssiHistory.length')?
+    * Versuche, die 'rawDataPayload' (falls vorhanden) lesbar zu machen (z.B. als Text oder bekannte Strukturen). Prüfe auf gängige, unverschlüsselte Muster.
+4.  Kategorisiere die gefundenen FTF (z.B. nach Typ, Muster, Signalstärke) und liste sie auf.
+    `.trim();
+
+    // Prüfe, ob der User einen eigenen Prompt in config.js gesetzt hat.
+    // Wenn nicht (wenn es der Standard-Prompt ist), nutze den VW-Prompt.
+    let activePrompt = AppConfig.Logger.SYSTEM_PROMPT;
+    if (activePrompt === "Du bist ein professioneller BLE-Protokoll-Analyst...") {
+        activePrompt = vwAnalysisPrompt;
+        diagLog("Nutze spezifischen VW-FTF-Analyse-Prompt.", "utils");
+    } else {
+        diagLog("Nutze benutzerdefinierten Prompt aus config.js.", "utils");
+    }
+    // === ENDE VW-MOD ===
     
     const logData = {
-        systemPrompt: AppConfig.Logger.SYSTEM_PROMPT,
+        systemPrompt: activePrompt, // HIER wird der Prompt eingefügt
         metadata: {
             timestamp: new Date().toISOString(),
             scanStartTime: scanStartTime ? scanStartTime.toISOString() : null,
             totalDevicesLogged: totalLoggedCount,
             devicesInExport: deviceHistory.size,
-            version: "BeaconBay V13.3X"
+            version: "BeaconBay V13.3X (VW FTF Mod)"
         },
         devices: Array.from(deviceHistory.values()).map(dev => {
             return {
@@ -164,14 +196,14 @@ export async function generateLogFile() {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `BeaconBay_Log_${new Date().toISOString().split('T')[0]}.json`;
+        a.download = `BeaconBay_Log_VW-FTF_${new Date().toISOString().split('T')[0]}.json`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
+        diagLog("Log-Datei (VW-FTF) erfolgreich generiert.", "utils");
 
     } catch (e) {
-        // V13.3X: Dieser Callback funktioniert jetzt auch
         if (appCallbacks.diagLog) { 
             appCallbacks.diagLog(`Log-Generierung fehlgeschlagen: ${e.message}`, 'error');
         } else {
