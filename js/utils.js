@@ -1,12 +1,11 @@
 /**
- * js/utils.js (Version 13.3OO - DISTANZ-FIX)
+ * js/utils.js (Version 13.3OO - VW FTF-FIX)
  *
- * - REPARATUR: Ersetzt die fehlerhafte Distanzberechnung durch
- * das "Log-Distance Path Loss"-Modell.
- * - Führt einen anpassbaren UMGEBUNGSFAKTOR (N) ein.
- * - Zeigt "N/A" an, wenn keine kalibrierte TX-Power (bei 1m) verfügbar ist.
- * - Passt parseAdvertisementData an, um die kalibrierte TX-Power
- * (Byte 22) von iBeacons korrekt zu lesen.
+ * - REPARATUR: Ersetzt die fehlerhafte Distanzberechnung.
+ * - VW FTF-FIX: Fügt einen spezifischen Parser für Tünkers (0x0118)
+ * basierend auf dem FTF-Pseudocode hinzu.
+ * - Identifiziert FTFs basierend auf Payload-Muster (A, A+1, A+2)
+ * und klassifiziert sie basierend auf dem Gerätenamen (IAA/IAC).
  */
 
 import { diagLog } from './errorManager.js';
@@ -102,32 +101,14 @@ export function decodeKnownCharacteristic(charUuid, value) {
 
 // === DISTANZ-BERECHNUNG (REPARIERT) ===
 
-/**
- * Der Umgebungsfaktor (N). Passe diesen Wert an,
- * basierend auf deinen Flipper-Zero-Kalibrierungstests.
- * 2.0 = Freifeld | 3.0 = Büro | 3.5-4.5 = Metallhalle/Hindernisse
- */
 const UMGEBUNGSFAKTOR = 3.5;
 
-/**
- * Schätzt die Distanz basierend auf RSSI und kalibrierter TX Power.
- * (Log-Distance Path Loss Model)
- *
- * @param {number | null} txPowerAt1m Kalibrierter RSSI-Wert bei 1 Meter (MUSS negativ sein, z.B. -59).
- * @param {number} rssi Gemessener RSSI-Wert (z.B. -70).
- * @returns {string} Die formatierte Distanz oder "N/A".
- */
 export function calculateDistance(txPowerAt1m, rssi) {
-    // txPowerAt1m ist der *kalibrierte* RSSI-Wert bei 1 Meter.
-    // Wenn dieser Wert fehlt (null) oder ungültig ist (z.B. positiv),
-    // können wir die Distanz nicht berechnen.
     if (txPowerAt1m == null || txPowerAt1m === 0 || rssi == null) {
         return 'N/A';
     }
 
     try {
-        // Log-Distance Path Loss Model:
-        // distance = 10 ^ ((txPowerAt1m - rssi) / (10 * N))
         const exponent = (txPowerAt1m - rssi) / (10 * UMGEBUNGSFAKTOR);
         const distance = Math.pow(10, exponent);
         
@@ -205,6 +186,7 @@ function decodeGoogleFastPair(dataView) {
  * V13.3OO FIX: Setzt 'type' für Apple
  * V13.3JJ FIX: (Unverändert) Gibt 'null' nicht mehr zurück
  * DISTANZ-FIX: Passt 'txPower' für iBeacons an
+ * VW FTF-FIX: Fügt Tünkers-Logik (0x0118) hinzu
  */
 export function parseAdvertisementData(event) {
     const { device, rssi, txPower, manufacturerData, serviceData } = event;
@@ -213,8 +195,6 @@ export function parseAdvertisementData(event) {
         id: device.id,
         name: device.name || '[Unbenannt]',
         rssi: rssi,
-        // WICHTIG: Setze dies standardmäßig auf null.
-        // Dies ist die *kalibrierte TX-Power bei 1m*, NICHT event.txPower.
         txPower: null, 
         lastSeen: new Date(), // V13.3Q
         company: "N/A",
@@ -235,14 +215,9 @@ export function parseAdvertisementData(event) {
 
         if (appleData.byteLength === 25 && appleData.getUint8(0) === 0x02 && appleData.getUint8(1) === 0x15) {
             data.type = "iBeacon";
-            
-            // *** HIER IST DER WICHTIGE FIX ***
-            // iBeacons senden ihre kalibrierte TX-Power bei 1m an Byte 22.
             const txPowerAt1m = appleData.getInt8(22);
-            data.txPower = txPowerAt1m; // Setze den korrekten Wert für die Distanzberechnung
+            data.txPower = txPowerAt1m; 
         }
-        // Wenn es kein iBeacon ist (nur "Apple"), bleibt data.txPower null.
-        // Die Distanz wird als "N/A" angezeigt. Das ist korrekt.
         return data;
     }
 
@@ -276,7 +251,50 @@ export function parseAdvertisementData(event) {
         return data;
     }
 
-    // 5. Andere Herstellerdaten
+    // === START VW FTF-LOGIK ===
+    // 5. Tünkers FTF (VW-Spezifisch)
+    if (manufacturerData && manufacturerData.has(0x0118)) { // 0x0118 = Tünkers
+        // 0x0118 = 280 (dezimal)
+        data.company = companyIDs.get("280") || "Tünkers Maschinenbau GmbH";
+        data.type = "manufacturerData";
+        const payload = manufacturerData.get(0x0118);
+        data.beaconData.payload = dataViewToHex(payload);
+
+        // Deinen Pseudocode anwenden
+        if (payload.byteLength === 7) {
+            const a = payload.getUint8(0); // Byte 1
+            const b = payload.getUint8(3); // Byte 4
+            const c = payload.getUint8(5); // Byte 6
+
+            // Prüfe Muster A, A+1, A+2 (dein c == b+1 ist c == (a+1)+1 == a+2)
+            if (b === (a + 1) && c === (a + 2)) {
+                // ERFOLG! Dies ist ein FTF.
+                const tuenkersID = a;
+                let ftfTyp = "FTF (Tünkers)"; // Standard-Typ
+
+                // Klassifiziere basierend auf dem Gerätenamen
+                if (data.name.startsWith("IAA")) {
+                    ftfTyp = "Transport FTF";
+                } else if (data.name.startsWith("IAC")) {
+                    ftfTyp = "Stapler FTF";
+                }
+                
+                // Dies wird in der grünen Zeile auf der Karte angezeigt
+                data.decodedData = `${ftfTyp} (Tünkers-ID: ${tuenkersID})`;
+                data.type = "FTF"; // Setze einen speziellen Typ für die UI-Färbung
+            } else {
+                // Tünkers, aber nicht das FTF-Muster
+                data.decodedData = "Tünkers (Kein FTF-Muster)";
+            }
+        } else {
+            // Tünkers, aber falsche Payload-Länge
+            data.decodedData = "Tünkers (Falsche Payload-Länge)";
+        }
+        return data; // Wichtig: Verarbeite dieses Gerät und stoppe hier
+    }
+    // === ENDE VW FTF-LOGIK ===
+
+    // 6. Andere Herstellerdaten (war vorher 5.)
     if (manufacturerData && manufacturerData.size > 0) {
         const companyId = manufacturerData.keys().next().value;
         const mfgData = manufacturerData.get(companyId);
@@ -287,7 +305,7 @@ export function parseAdvertisementData(event) {
         return data;
     }
 
-    // 6. Andere Servicedaten
+    // 7. Andere Servicedaten (war vorher 6.)
     if (serviceData && serviceData.size > 0) {
         const serviceUuid = serviceData.keys().next().value;
         const srvData = serviceData.get(serviceUuid);
@@ -298,14 +316,15 @@ export function parseAdvertisementData(event) {
         return data;
     }
     
-    // 7. Nur-Name
+    // 8. Nur-Name (war vorher 7.)
     if (device.name) {
         data.type = "nameOnly";
         return data;
     }
     
-    // 8. V13.3JJ FIX: (Unverändert) Fallback
+    // 9. V13.3JJ FIX: (Unverändert) Fallback (war vorher 8.)
     diagLog(`[Parser] Gerät ${device.id.substring(0,4)}... hat keine Daten (anonym).`, 'utils');
     data.type = "anonymous";
     return data;
 }
+ 
