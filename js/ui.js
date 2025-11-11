@@ -1,11 +1,13 @@
 /**
- * js/ui.js (Version 13.3OO - "Render & Chart Fix")
+ * js/ui.js (Version 13.3PP - "Final Refactor Fix")
  * * ARCHITEKTUR-HINWEIS:
- * - V13.3OO FIX: Stellt die V12.3-Funktionskörper für
+ * - V13.3PP FIX: 'setScanStatus' (V13.3Z) ändert jetzt
+ * die CSS-Klassen (btn-primary/btn-secondary) (Behebt Bug 3).
+ * - V13.3PP FIX: Stellt die V12.3-Funktionskörper für
  * 'renderTelemetry', 'renderBeaconData', 'renderDecodedData'
- * wieder her. (Behebt "undefined undefined undefined"-Bug).
- * - V13.3OO FIX: Stellt den V13.3KK-Fix 'new window.Chart()'
- * wieder her. (Behebt "Klick funktioniert nicht"-Bug).
+ * wieder her. (Behebt Bug 1: "Vorschau fehlt").
+ * - V13.3PP FIX: Stellt den V13.3KK-Fix 'new window.Chart()'
+ * wieder her. (Behebt Bug 2: "Klick funktioniert nicht").
  * - V13.3NN: (Unverändert) 'setupUIListeners' (DOM Assignment).
  * - V13.3LL: (Unverändert) 'updateBeaconUI' (Guard Clause).
  */
@@ -254,13 +256,45 @@ export function setupUIListeners(callbacks) {
         hideWriteModal();
     });
     
-    diagLog('UI-Event-Listener (V13.3OO) erfolgreich gebunden.', 'info');
+    diagLog('UI-Event-Listener (V13.3PP) erfolgreich gebunden.', 'info');
 }
 
 /**
- * V13.3Z FIX: (unverändert)
+ * V13.3PP FIX: (Behebt Bug 3)
+ * Ändert 'disabled' UND 'class'
  */
-export function setScanStatus(isScanning) { /* ... (V13.3Z, unverändert) ... */ }
+export function setScanStatus(isScanning) {
+    // V13.3Z FIX: (unverändert) Guard Clauses
+    if (isScanning) {
+        if (scanButton) {
+            scanButton.disabled = true;
+            scanButton.textContent = 'Scanning...';
+            // V13.3PP FIX:
+            scanButton.classList.remove('btn-primary');
+            scanButton.classList.add('btn-secondary');
+        }
+        if (disconnectButton) {
+            disconnectButton.disabled = false;
+            // V13.3PP FIX:
+            disconnectButton.classList.add('btn-primary');
+            disconnectButton.classList.remove('btn-secondary');
+        }
+    } else {
+        if (scanButton) {
+            scanButton.disabled = false;
+            scanButton.textContent = 'Scan Starten';
+            // V13.3PP FIX:
+            scanButton.classList.add('btn-primary');
+            scanButton.classList.remove('btn-secondary');
+        }
+        if (disconnectButton) {
+            disconnectButton.disabled = true;
+            // V13.3PP FIX:
+            disconnectButton.classList.remove('btn-primary');
+            disconnectButton.classList.add('btn-secondary');
+        }
+    }
+}
 
 /**
  * V13.3LL FIX: (unverändert) Guard Clause
@@ -286,6 +320,7 @@ export function updateBeaconUI(deviceId, device) {
             card.classList.add('data-beacon');
         }
         
+        // V13.3MM FIX: Diese Aufrufe funktionieren jetzt
         card.innerHTML = `
             <h3>${device.name}</h3>
             <div class="beacon-meta">
