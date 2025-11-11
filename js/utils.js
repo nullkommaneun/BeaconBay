@@ -1,11 +1,10 @@
 /**
- * js/utils.js (Version 13.3OO - VW FTF-FIX)
+ * js/utils.js (Version 13.3OO - VW FTF-FIX V2)
  *
  * - REPARATUR: Ersetzt die fehlerhafte Distanzberechnung.
- * - VW FTF-FIX: Fügt einen spezifischen Parser für Tünkers (0x0118)
- * basierend auf dem FTF-Pseudocode hinzu.
- * - Identifiziert FTFs basierend auf Payload-Muster (A, A+1, A+2)
- * und klassifiziert sie basierend auf dem Gerätenamen (IAA/IAC).
+ * - VW FTF-FIX V2: Implementiert die KORREKTE Tünkers-Analyse
+ * (basierend auf der A-A-A-B-B-C-C Redundanz-Logik)
+ * und ersetzt die fehlerhafte V1-Implementierung.
  */
 
 import { diagLog } from './errorManager.js';
@@ -99,7 +98,7 @@ export function decodeKnownCharacteristic(charUuid, value) {
     return `Hex: ${dataViewToHex(value)}`;
 }
 
-// === DISTANZ-BERECHNUNG (REPARIERT) ===
+// === DISTANZ-BERECHNUNG (unverändert) ===
 
 const UMGEBUNGSFAKTOR = 3.5;
 
@@ -186,7 +185,7 @@ function decodeGoogleFastPair(dataView) {
  * V13.3OO FIX: Setzt 'type' für Apple
  * V13.3JJ FIX: (Unverändert) Gibt 'null' nicht mehr zurück
  * DISTANZ-FIX: Passt 'txPower' für iBeacons an
- * VW FTF-FIX: Fügt Tünkers-Logik (0x0118) hinzu
+ * VW FTF-FIX V2: KORREKTE Tünkers-Logik (0x0118)
  */
 export function parseAdvertisementData(event) {
     const { device, rssi, txPower, manufacturerData, serviceData } = event;
@@ -251,25 +250,36 @@ export function parseAdvertisementData(event) {
         return data;
     }
 
-    // === START VW FTF-LOGIK ===
+    // === START VW FTF-LOGIK (V2 - KORRIGIERT) ===
     // 5. Tünkers FTF (VW-Spezifisch)
     if (manufacturerData && manufacturerData.has(0x0118)) { // 0x0118 = Tünkers
-        // 0x0118 = 280 (dezimal)
-        data.company = companyIDs.get("280") || "Tünkers Maschinenbau GmbH";
+        // 0x0118 = 280 (dezimal). ID 0x0118 ist Radius Networks (Tünkers nutzt deren Hardware)
+        data.company = companyIDs.get("280") || "Radius Networks (Tünkers)";
         data.type = "manufacturerData";
         const payload = manufacturerData.get(0x0118);
         data.beaconData.payload = dataViewToHex(payload);
 
-        // Deinen Pseudocode anwenden
+        // Deine Analyse (Schritt 4) anwenden: A-A-A-B-B-C-C
         if (payload.byteLength === 7) {
-            const a = payload.getUint8(0); // Byte 1
-            const b = payload.getUint8(3); // Byte 4
-            const c = payload.getUint8(5); // Byte 6
+            const a1 = payload.getUint8(0); // A
+            const a2 = payload.getUint8(1); // A
+            const a3 = payload.getUint8(2); // A
+            const b1 = payload.getUint8(3); // B
+            const b2 = payload.getUint8(4); // B
+            const c1 = payload.getUint8(5); // C
+            const c2 = payload.getUint8(6); // C
 
-            // Prüfe Muster A, A+1, A+2 (dein c == b+1 ist c == (a+1)+1 == a+2)
-            if (b === (a + 1) && c === (a + 2)) {
+            // 1. VALIDIERUNG: A-A-A, B-B, C-C (Redundanz-Prüfung)
+            const isRedundant = (a1 === a2) && (a2 === a3) &&
+                                (b1 === b2) &&
+                                (c1 === c2);
+            
+            // 2. VALIDIERUNG: Logische Regel (A+1=B, B+1=C)
+            const isSequential = (b1 === (a1 + 1)) && (c1 === (b1 + 1));
+
+            if (isRedundant && isSequential) {
                 // ERFOLG! Dies ist ein FTF.
-                const tuenkersID = a;
+                const tuenkersID = a1; // Die "logische Zahl" A
                 let ftfTyp = "FTF (Tünkers)"; // Standard-Typ
 
                 // Klassifiziere basierend auf dem Gerätenamen
@@ -281,10 +291,12 @@ export function parseAdvertisementData(event) {
                 
                 // Dies wird in der grünen Zeile auf der Karte angezeigt
                 data.decodedData = `${ftfTyp} (Tünkers-ID: ${tuenkersID})`;
-                data.type = "FTF"; // Setze einen speziellen Typ für die UI-Färbung
+                // Setze einen speziellen Typ, damit die Karte in "style.css"
+                // die .data-beacon-Klasse (roter Rand) bekommt
+                data.type = "FTF (Tünkers)"; 
             } else {
                 // Tünkers, aber nicht das FTF-Muster
-                data.decodedData = "Tünkers (Kein FTF-Muster)";
+                data.decodedData = "Tünkers (Ungültiges Muster)";
             }
         } else {
             // Tünkers, aber falsche Payload-Länge
