@@ -1,11 +1,15 @@
 /**
- * js/utils.js (Version 14.0 - High Performance VW Mod)
- * Optimiert für binäre Erkennung von FTF und reduzierten CPU-Overhead.
+ * js/utils.js (Version 14.1 - High Performance VW Mod - REPAIRED)
+ * * - Beinhaltet: Binäre FTF-Signaturen (Cypress, Transport, Spezial).
+ * - Beinhaltet: Optimierte Hex-Konvertierung.
+ * - REPARATUR: Stellt fehlende Exporte (KNOWN_CHARACTERISTICS, 
+ * hexStringToArrayBuffer, decodeKnownCharacteristic, calculateDistance) wieder her,
+ * damit bluetooth.js und ui.js nicht abstürzen.
  */
 
 import { diagLog } from './errorManager.js';
 
-// === FTS SIGNATUREN (Neu: Binäre Fingerabdrücke aus Ihrer Log-Analyse) ===
+// === FTS SIGNATUREN (Binäre Fingerabdrücke) ===
 const FTF_SIGNATURES = [
     {
         // Cypress Semiconductor (Häufig in Ihrem Log gesehen)
@@ -38,6 +42,20 @@ export const KNOWN_SERVICES = new Map([
     ['0000180a-0000-1000-8000-00805f9b34fb', 'Device Information']
 ]);
 
+// --- REPARATUR: Fehlender Export wiederhergestellt ---
+export const KNOWN_CHARACTERISTICS = new Map([
+    ['00002a00-0000-1000-8000-00805f9b34fb', 'Device Name'],
+    ['00002a01-0000-1000-8000-00805f9b34fb', 'Appearance'],
+    ['00002a04-0000-1000-8000-00805f9b34fb', 'Peripheral Preferred Connection Parameters'],
+    ['00002a19-0000-1000-8000-00805f9b34fb', 'Battery Level'],
+    ['00002a29-0000-1000-8000-00805f9b34fb', 'Manufacturer Name String'],
+    ['00002a24-0000-1000-8000-00805f9b34fb', 'Model Number String'],
+    ['00002a25-0000-1000-8000-00805f9b34fb', 'Serial Number String'],
+    ['00002a27-0000-1000-8000-00805f9b34fb', 'Hardware Revision String'],
+    ['00002a26-0000-1000-8000-00805f9b34fb', 'Firmware Revision String'],
+    ['00002a28-0000-1000-8000-00805f9b34fb', 'Software Revision String']
+]);
+
 let companyIDs = new Map();
 
 // === HELFER (Optimiert) ===
@@ -53,6 +71,60 @@ export function dataViewToHex(dataView) {
         hex += HEX_TABLE[dataView.getUint8(i)];
     }
     return hex;
+}
+
+export function dataViewToText(dataView) {
+    if (!dataView) return "";
+    try {
+        return new TextDecoder().decode(dataView);
+    } catch (e) {
+        return "[Dekodierfehler]";
+    }
+}
+
+// --- REPARATUR: Fehlende Funktion wiederhergestellt (für Write Modal) ---
+export function hexStringToArrayBuffer(hex) {
+    hex = hex.replace(/[^0-9A-Fa-f]/g, '');
+    if (hex.length % 2 !== 0) hex = '0' + hex;
+    const buffer = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+        buffer[i / 2] = parseInt(hex.substring(i, i + 2), 16);
+    }
+    return buffer.buffer;
+}
+
+// --- REPARATUR: Fehlende Funktion wiederhergestellt (für GATT UI) ---
+export function decodeKnownCharacteristic(charUuid, value) {
+    const normalizedUuid = charUuid.toLowerCase();
+    // Standard-UUIDs (Strings)
+    if ([
+        '00002a00-0000-1000-8000-00805f9b34fb', // Device Name
+        '00002a29-0000-1000-8000-00805f9b34fb', // Manufacturer Name
+        '00002a24-0000-1000-8000-00805f9b34fb', // Model Number
+        '00002a25-0000-1000-8000-00805f9b34fb', // Serial Number
+        '00002a27-0000-1000-8000-00805f9b34fb', // Hardware Revision
+        '00002a26-0000-1000-8000-00805f9b34fb', // Firmware Revision
+        '00002a28-0000-1000-8000-00805f9b34fb'  // Software Revision
+    ].includes(normalizedUuid)) {
+        return `"${dataViewToText(value)}"`;
+    }
+    // Standard-UUIDs (Zahlen)
+    if (normalizedUuid === '00002a19-0000-1000-8000-00805f9b34fb') { // Battery
+        return `${value.getUint8(0)} %`;
+    }
+    return `Hex: ${dataViewToHex(value)}`;
+}
+
+// --- REPARATUR: Fehlende Funktion wiederhergestellt (für UI) ---
+const UMGEBUNGSFAKTOR = 3.5;
+export function calculateDistance(txPowerAt1m, rssi) {
+    if (txPowerAt1m == null || txPowerAt1m === 0 || rssi == null) return 'N/A';
+    try {
+        const exponent = (txPowerAt1m - rssi) / (10 * UMGEBUNGSFAKTOR);
+        const distance = Math.pow(10, exponent);
+        let label = distance < 1.0 ? ' (direkt)' : distance < 5.0 ? ' (nah)' : ' (fern)';
+        return distance.toFixed(2) + ' m' + label;
+    } catch (e) { return 'Fehler'; }
 }
 
 /**
@@ -103,11 +175,13 @@ export function parseAdvertisementData(event) {
         name: device.name || '[Unbenannt]',
         rssi: rssi,
         txPower: txPower || null,
-        lastSeen: Date.now(), // Integer Timestamp spart Speicher vs Date-Objekt
+        // WICHTIG: Konvertiere Timestamp wieder zu Date-Objekt für Logger/UI
+        lastSeen: new Date(), 
         company: "N/A",
         type: "N/A",
         decodedData: null,
         beaconData: {},
+        telemetry: {}, // Hinzugefügt für UI-Kompatibilität
         isFtf: false // Flag für schnelle Filterung im Logger
     };
 
