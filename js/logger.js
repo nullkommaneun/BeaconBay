@@ -1,6 +1,10 @@
 /**
- * js/logger.js (Version 14.0 - Memory Optimized)
- * Speichert nur Änderungen (Deltas) statt voller Kopien.
+ * js/logger.js (Version 14.1 - Memory Optimized - REPAIRED)
+ * - Speichert nur Änderungen (Deltas) statt voller Kopien.
+ * - REPARATUR: Fügt die fehlende 'getDeviceLog'-Funktion wieder hinzu,
+ * damit der Inspektor (Klick auf Karte) funktioniert.
+ * - Transformiert die optimierten internen Daten zurück in das Format,
+ * das die UI (inspectorView) erwartet.
  */
 
 import { AppConfig } from './config.js';
@@ -57,6 +61,10 @@ export function logAdvertisement(device, rssi, parsedData) {
             rssi: rssi,
             txPower: parsedData.txPower,
             currentPayload: parsedData.beaconData.payload || "",
+            // Speichern für den Inspektor (Kompatibilität)
+            decodedData: parsedData.decodedData,
+            telemetry: parsedData.telemetry || {},
+            isConnectable: true, // Standardannahme
             
             // Optimierte Historien
             rssiHistory: [], // Speichert nur [timeDiff, rssi]
@@ -69,32 +77,38 @@ export function logAdvertisement(device, rssi, parsedData) {
     entry.lastSeen = now;
     entry.rssi = rssi;
     if (parsedData.txPower) entry.txPower = parsedData.txPower;
+    if (parsedData.decodedData) entry.decodedData = parsedData.decodedData;
+    if (parsedData.telemetry && Object.keys(parsedData.telemetry).length > 0) {
+        entry.telemetry = parsedData.telemetry;
+    }
 
     // 1. RSSI Historie optimieren: Speichere Time-Delta statt absolutem String
     // [Delta in Sekunden, RSSI] -> Spart enorm Platz im RAM/JSON
     const timeSinceStart = scanStartTime ? Math.floor((now - scanStartTime.getTime()) / 1000) : 0;
-    // Begrenze RSSI History Array Länge manuell (Array.shift ist langsam, aber hier ok für kleine Arrays)
+    // Begrenze RSSI History Array Länge manuell
     if (entry.rssiHistory.length >= 50) entry.rssiHistory.shift();
     entry.rssiHistory.push([timeSinceStart, rssi]);
 
-    // 2. Stammdaten-Update (nur wenn sich was ändert, z.B. Name taucht erst später auf)
+    // 2. Stammdaten-Update
     if (parsedData.name !== '[Unbenannt]' && entry.staticData.name === '[Unbenannt]') {
         entry.staticData.name = parsedData.name;
     }
     if (parsedData.isFtf) entry.staticData.isFtf = true;
 
     // 3. Payload Historie (Deduplizierung!)
-    // Wir speichern den Eintrag NUR in die History, wenn sich der Payload ändert 
-    // ODER wenn es das erste Mal ist. Sonst aktualisieren wir nur 'lastSeen'.
     const newPayload = parsedData.beaconData.payload || "";
     
     if (newPayload !== entry.currentPayload || entry.payloadHistory.size === 0) {
         entry.currentPayload = newPayload;
         // Speichere kompakten Snapshot
         entry.payloadHistory.push({
-            t: timeSinceStart, // Relativer Zeitstempel (Integer)
+            t: timeSinceStart, 
             r: rssi,
-            p: newPayload // Payload nur speichern, wenn neu
+            p: newPayload,
+            // Speichere wichtige UI-Daten auch im Verlauf
+            company: parsedData.company, 
+            type: parsedData.type,
+            beaconData: { payload: newPayload } // Kompatibilität für UI
         });
     } 
     
@@ -106,9 +120,58 @@ export function logAdvertisement(device, rssi, parsedData) {
             ...entry.staticData,
             id: entry.id,
             rssi: entry.rssi,
+            txPower: entry.txPower,
+            decodedData: entry.decodedData,
+            beaconData: { payload: entry.currentPayload },
+            telemetry: entry.telemetry,
             lastSeen: new Date(entry.lastSeen)
         }, isNew);
     }
+}
+
+// --- REPARATUR: Diese Funktion fehlte und wird von app.js benötigt ---
+export function getDeviceLog(deviceId) {
+    const entry = deviceHistory.get(deviceId);
+    if (!entry) return null;
+
+    // TRANSFORMATION: Wir müssen die optimierten Daten so umbauen, 
+    // dass sie wie das alte "deviceLog"-Objekt aussehen, das showInspectorView erwartet.
+    
+    // 1. Rekonstruiere RSSI History (aus Deltas)
+    const startTs = scanStartTime ? scanStartTime.getTime() : entry.staticData.firstSeen;
+    const rssiHistoryExpanded = entry.rssiHistory.map(item => {
+        const timestamp = new Date(startTs + (item[0] * 1000)).toISOString();
+        return { t: timestamp, r: item[1] };
+    });
+
+    // 2. Rekonstruiere Advertisement History
+    // Der RingBuffer liefert Objekte { t, r, p, company... }
+    // Wir müssen sie in das Format { type, company, beaconData... } bringen
+    const ads = entry.payloadHistory.toArray().map(item => {
+        return {
+            type: item.type || entry.staticData.type,
+            company: item.company || entry.staticData.company,
+            beaconData: item.beaconData || { payload: item.p }
+        };
+    });
+
+    return {
+        id: entry.id,
+        name: entry.staticData.name,
+        company: entry.staticData.company,
+        type: entry.staticData.type,
+        isConnectable: entry.isConnectable,
+        firstSeen: new Date(entry.staticData.firstSeen),
+        lastSeen: new Date(entry.lastSeen),
+        rssiHistory: rssiHistoryExpanded,
+        advertisementHistory: {
+            toArray: () => ads // Mock für die .toArray() Methode des RingBuffers
+        },
+        // Aktuelle Daten für Header
+        beaconData: { payload: entry.currentPayload },
+        telemetry: entry.telemetry,
+        decodedData: entry.decodedData
+    };
 }
 
 export function clearLogs() {
@@ -168,3 +231,4 @@ export async function generateLogFile() {
         diagLog("Export Fehler: " + e.message, "error");
     }
 }
+ 
