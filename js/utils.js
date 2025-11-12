@@ -1,9 +1,8 @@
 /**
- * js/utils.js (Version 13.3-Clean)
+ * js/utils.js (Version 13.3-VW-Patch)
  *
- * - Bereinigte Version: Entfernt alle spezifischen FTF- und Beacon-Decoder.
- * - Behält generische BLE-Bibliotheken und GATT-Definitionen bei.
- * - Behält generische Parser für Manufacturer- und Service-Data bei.
+ * - Integriert: Spezifische Erkennung für VW FTF (IAA/IAC Muster).
+ * - Scannt ManufacturerData nach ASCII-Strings.
  */
 
 import { diagLog } from './errorManager.js';
@@ -67,6 +66,22 @@ export function dataViewToText(dataView) {
         diagLog(`Fehler beim Dekodieren von Text: ${e.message}`, 'error');
         return "[Dekodierfehler]";
     }
+}
+
+/**
+ * Extrahiert druckbare ASCII-Zeichen aus einem DataView.
+ * Hilft, versteckte Strings in binären Payloads zu finden (wie IAA025).
+ */
+function extractPrintableAscii(dataView) {
+    let result = "";
+    for (let i = 0; i < dataView.byteLength; i++) {
+        let code = dataView.getUint8(i);
+        // Akzeptiere nur druckbare Zeichen (32-126)
+        if (code >= 32 && code <= 126) {
+            result += String.fromCharCode(code);
+        }
+    }
+    return result;
 }
 
 export function hexStringToArrayBuffer(hex) {
@@ -157,7 +172,7 @@ export async function loadCompanyIDs() {
     }
 }
 
-// === "SMARTER SCANNER" DECODER (BEREINIGT) ===
+// === "SMARTER SCANNER" DECODER (MIT FTS PATCH) ===
 
 /**
  * Haupt-Parser-Funktion
@@ -170,35 +185,61 @@ export function parseAdvertisementData(event) {
         id: device.id,
         name: device.name || '[Unbenannt]',
         rssi: rssi,
-        txPower: null, // Wird ggf. später von iBeacon überschrieben (jetzt entfernt)
+        txPower: null, 
         lastSeen: new Date(),
         company: "N/A",
         type: "N/A", 
         decodedData: null, 
         beaconData: {},
-        telemetry: {} // Bleibt für zukünftige generische Decoder
+        telemetry: {} 
     };
 
-    // 1. Andere Herstellerdaten (Fallback)
-    // Dieser Block fängt jetzt ALLE Herstellerdaten ab (Apple, Samsung, Tünkers, Ruuvi etc.)
-    // und stellt sie generisch dar, ohne spezifische Dekodierung.
+    // 1. Manufacturer Data + VW FTS Logik
     if (manufacturerData && manufacturerData.size > 0) {
         const companyId = manufacturerData.keys().next().value;
         const mfgData = manufacturerData.get(companyId);
         
-        // Hole TX Power, falls im iBeacon-Format (0x004C)
+        // Hex Payload speichern
+        data.beaconData.payload = dataViewToHex(mfgData);
+        
+        // --- VW FTS ERKENNUNG START ---
+        // Wir wandeln den binären Payload in einen bereinigten String um und suchen
+        // nach dem Muster IAAXXX oder IACXXX (z.B. aus Hex "494141303235" wird "IAA025")
+        const asciiContent = extractPrintableAscii(mfgData);
+        const ftsPattern = /(IAA|IAC)\d{3}/; // Muster: IAA oder IAC gefolgt von 3 Ziffern
+        const match = asciiContent.match(ftsPattern);
+
+        if (match) {
+            // FTS GEFUNDEN! Wir überschreiben Name und Typ.
+            const ftsId = match[0]; // z.B. "IAA025"
+            data.name = `VW FTF ${ftsId}`;
+            data.type = "VW-FTS";
+            data.decodedData = `Fahrzeug erkannt: ${ftsId} (Typ: ${ftsId.startsWith('IAA') ? 'Transport' : 'Stapler'})`;
+            data.company = "VW Logistik (via " + (companyIDs.get(companyId.toString()) || "Unbekannt") + ")";
+            
+            // Versuche TxPower zu lesen, falls vorhanden (z.B. Byte 22 bei iBeacon-ähnlichen Strukturen)
+             if (mfgData.byteLength >= 23) {
+                 data.txPower = mfgData.getInt8(mfgData.byteLength - 3) || 12; // Fallback auf 12 (aus Log)
+             }
+             
+            return data;
+        }
+        // --- VW FTS ERKENNUNG ENDE ---
+
+
+        // Fallback: Standard Manufacturer Behandlung
+        // Hole TX Power, falls im iBeacon-Format (Apple 0x004C, Länge 25)
         if (companyId === 0x004C && mfgData.byteLength === 25 && mfgData.getUint8(0) === 0x02 && mfgData.getUint8(1) === 0x15) {
              data.txPower = mfgData.getInt8(22);
         }
 
         data.company = companyIDs.get(companyId.toString()) || `Unbekannt (0x${companyId.toString(16).padStart(4, '0')})`;
         data.type = "manufacturerData";
-        data.beaconData.payload = dataViewToHex(mfgData); 
+        
         return data;
     }
 
     // 2. Andere Servicedaten (Fallback)
-    // Fängt alle Service-Daten ab (z.B. Eddystone 0xFEAA, FastPair 0xFE2C, etc.)
     if (serviceData && serviceData.size > 0) {
         const serviceUuid = serviceData.keys().next().value;
         const srvData = serviceData.get(serviceUuid);
@@ -219,4 +260,3 @@ export function parseAdvertisementData(event) {
     data.type = "anonymous";
     return data;
 }
- 
